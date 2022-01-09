@@ -3,7 +3,20 @@ name = "ncli"
 version = "0.1.0"
 authors = ["Steven Wijaya <stevenwjy149@gmail.com>"]
 edition = "2018"
+license = "Apache-2.0"
+description = "A tool to manage notes"
+readme = "README.md"
+homepage = "https://github.com/stevenwjy/ncli"
+repository = "https://github.com/stevenwjy/ncli"
+keywords = ["cli", "notes"]
+categories = ["command-line-utilities"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0"
+clap = { version = "3.0.0", features = ["derive"] }
+env_logger = "0.9.0"
+lazy_static = "1.4.0"
+log = "0.4"
+regex = "1.5"
