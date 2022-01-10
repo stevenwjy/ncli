@@ -9,11 +9,15 @@ use regex::Regex;
 use log::{info, warn};
 
 lazy_static! {
+    static ref EXPORT_NAME_RE: Regex =
+        Regex::new(r"^Export-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.zip$")
+            .unwrap();
     static ref VERSIONED_NAME_RE: Regex =
-        Regex::new(r"^(.*) ([0-9a-f]{32})(?:.(md|csv))?$").unwrap();
+        Regex::new(r"^(.*) ([0-9a-f]{32})(?:\.(md|csv))?$").unwrap();
 }
 
 const VERSION_FILE_NAME: &str = "version.txt";
+const TMP_DIR: &str = "/tmp/ncli";
 
 pub struct ExportOpts {
     pub source: PathBuf,
@@ -23,13 +27,11 @@ pub struct ExportOpts {
 }
 
 pub fn export(opts: ExportOpts) -> Result<()> {
-    if !opts.source.exists() || !opts.source.is_dir() {
-        return Err(anyhow!("source path must be a valid directory"));
-    }
+    // Extract the zip file
+    let extracted_dir = validate_source(&opts.source)?;
+    let entry = build_entry(&extracted_dir)?;
 
-    let entry = build_entry(&opts.source)?;
-
-    // remove target if it currently exists
+    // Remove target if it currently exists
     if opts.target.exists() {
         if !opts.force {
             return Err(anyhow!("target path '{:?}' already exists", opts.target));
@@ -47,33 +49,66 @@ pub fn export(opts: ExportOpts) -> Result<()> {
         }
     }
 
-    // create the target directory
-    info!("Creating target directory: '{:?}'", opts.target);
+    // Create the target directory
+    info!("Creating target directory: {:?}", opts.target);
     fs::create_dir_all(&opts.target)?;
 
-    let target_name = opts
-        .target
-        .file_name()
-        .ok_or(anyhow!("unable to read target dir name"))?;
-    let target_name = target_name
-        .to_str()
-        .ok_or(anyhow!("unable to convert target dir name to string"))?;
-    if !target_name.eq(&entry.name) {
-        warn!("The target directory name is different from the source");
-    }
-
     info!("Building target directory");
-
     build_target(&opts.target, &entry)?;
 
+    // Always remove the temp directory
+    fs::remove_dir_all(&extracted_dir)?;
+
+    // Optionally remove the source zip file
     if opts.clean {
         info!("Removing the source directory");
-        fs::remove_dir_all(opts.source)?;
+        fs::remove_file(&opts.source)?;
     }
 
     info!("Export operation has been executed successfully");
 
     Ok(())
+}
+
+fn validate_source(path: &PathBuf) -> Result<PathBuf> {
+    if !path.exists() {
+        return Err(anyhow!("source path does not exist"));
+    }
+
+    let file_name = path
+        .file_name()
+        .ok_or(anyhow!("unable to read source file name"))?
+        .to_str()
+        .ok_or(anyhow!("unable to convert source file name to string"))?;
+    let caps = EXPORT_NAME_RE
+        .captures(file_name)
+        .ok_or(anyhow!("invalid export file name"))?;
+
+    // Remove "-" char from the version format, which is a UUID
+    let export_version = caps.get(1).unwrap().as_str().replace("-", "");
+
+    // The exported file should be named this way to follow the versioned file name convention
+    let export_dest = PathBuf::from(TMP_DIR).join(format!("Export {}", export_version));
+
+    // Prepare the export target directory
+    if export_dest.exists() {
+        if export_dest.is_dir() {
+            warn!("Removing dir '{:?}' to avoid conflict", &export_dest);
+            fs::remove_dir_all(&export_dest)?;
+        } else {
+            warn!("Removing file '{:?}' to avoid conflict", &export_dest);
+            fs::remove_file(&export_dest)?;
+        }
+    }
+    fs::create_dir_all(&export_dest)?;
+
+    // Open the exported zip file
+    let zip_file = fs::File::open(&path)?;
+
+    // Extract into the tmp folder
+    zip_extract::extract(zip_file, &export_dest, true)?;
+
+    Ok(export_dest)
 }
 
 #[derive(Debug)]
@@ -91,8 +126,9 @@ enum EntryKind {
 }
 
 fn build_entry(path: &PathBuf) -> Result<Entry> {
-    let file_name = path.file_name().ok_or(anyhow!("name not found"))?;
-    let file_name = file_name
+    let file_name = path
+        .file_name()
+        .ok_or(anyhow!("name not found"))?
         .to_str()
         .ok_or(anyhow!("unable to convert file name to string"))?;
     let caps = VERSIONED_NAME_RE

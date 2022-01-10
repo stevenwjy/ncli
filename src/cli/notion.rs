@@ -20,20 +20,20 @@ impl Exec for Subcli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    Extract(ExtractCommand),
+    Export(ExportCommand),
 }
 
 impl Exec for Command {
     fn run(&self) {
         match self {
-            Command::Extract(subcmd) => subcmd.run(),
+            Command::Export(subcmd) => subcmd.run(),
         }
     }
 }
 
 #[derive(Args, Debug)]
-struct ExtractCommand {
-    /// Path to the directory exported from Notion. Note that since Notion
+struct ExportCommand {
+    /// Path to the zip file exported from Notion. Note that since Notion
     /// by default gives you a ZIP file, you need to unzip it first.
     #[clap(short, long, parse(from_os_str))]
     source: PathBuf,
@@ -53,9 +53,9 @@ struct ExtractCommand {
     clean: bool,
 }
 
-impl Exec for ExtractCommand {
+impl Exec for ExportCommand {
     fn run(&self) {
-        debug!("Running notion extract command: {:?}", self);
+        debug!("Running notion export command: {:?}", self);
 
         let opts = notion::ExportOpts {
             source: self.source.clone(),
