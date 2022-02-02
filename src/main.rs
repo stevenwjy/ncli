@@ -1,14 +1,17 @@
 use clap::Parser;
+use log::{error, info};
 
 mod cli;
-mod exec;
+mod config;
+mod kindle;
 mod notion;
-
-use exec::Exec;
 
 fn main() {
     env_logger::init();
 
     let result = cli::Cli::parse();
-    result.run();
+    match result.run() {
+        Ok(_) => info!("Command has been executed successfully!"),
+        Err(err) => error!("Error occured: {:?}", err),
+    }
 }

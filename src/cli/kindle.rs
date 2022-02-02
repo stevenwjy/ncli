@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
+use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use crate::exec::Exec;
+use crate::kindle;
+use crate::kindle::Config;
 
 #[derive(Args, Debug)]
 pub struct Subcli {
@@ -10,26 +12,45 @@ pub struct Subcli {
     command: Command,
 }
 
-impl Exec for Subcli {
-    fn run(&self) {
-        self.command.run();
+impl Subcli {
+    pub fn run(&self, conf: Config) -> Result<()> {
+        self.command.run(conf)
     }
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    Extract {
-        /// Path to the directory exported from Kindle. Note that since Kindle
-        /// by default gives you a ZIP file, you need to unzip it first.
-        #[clap(parse(from_os_str))]
-        source: PathBuf,
-
-        /// Path to the target location after the conversion.
-        #[clap(parse(from_os_str))]
-        target: PathBuf,
-    },
+    Export(ExportCommand),
 }
 
-impl Exec for Command {
-    fn run(&self) {}
+impl Command {
+    pub fn run(&self, conf: Config) -> Result<()> {
+        match self {
+            Command::Export(subcmd) => subcmd.run(conf),
+        }
+    }
+}
+
+#[derive(Args, Debug)]
+struct ExportCommand {
+    /// Path to the target location for the export.
+    #[clap(long, parse(from_os_str))]
+    target: PathBuf,
+
+    /// If headless argument is provided, the export operation will be performed headless.
+    #[clap(long)]
+    headless: bool,
+}
+
+impl ExportCommand {
+    pub fn run(&self, conf: Config) -> Result<()> {
+        let opts = kindle::ExportOpts {
+            target: self.target.clone(),
+            headless: self.headless,
+            email: conf.email,
+            password: conf.password,
+        };
+
+        kindle::export(opts)
+    }
 }

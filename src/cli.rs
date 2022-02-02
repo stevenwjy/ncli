@@ -1,9 +1,13 @@
+use std::path::PathBuf;
+
+use anyhow::Result;
 use clap::{Parser, Subcommand};
+use log::debug;
 
 mod kindle;
 mod notion;
 
-use crate::exec::Exec;
+use crate::config::Config;
 
 #[derive(Parser, Debug)]
 #[clap(name = "ncli", version = "0.1.0")]
@@ -15,11 +19,19 @@ use crate::exec::Exec;
 pub struct Cli {
     #[clap(subcommand)]
     command: Command,
+
+    /// Path to the config file.
+    #[clap(long, parse(from_os_str), default_value = "~/.ncli/config.toml")]
+    config: PathBuf,
 }
 
-impl Exec for Cli {
-    fn run(&self) {
-        self.command.run();
+impl Cli {
+    pub fn run(&self) -> Result<()> {
+        debug!("Running command: {:?}", self);
+
+        let conf = Config::load(self.config.clone())?;
+
+        self.command.run(conf)
     }
 }
 
@@ -29,11 +41,13 @@ enum Command {
     Kindle(kindle::Subcli),
 }
 
-impl Exec for Command {
-    fn run(&self) {
+impl Command {
+    fn run(&self, conf: Config) -> Result<()> {
         match self {
-            Command::Notion(subcli) => subcli.run(),
-            Command::Kindle(subcli) => subcli.run(),
+            Command::Notion(subcli) => subcli.run(), // we don't really need config for now
+            Command::Kindle(subcli) => {
+                subcli.run(conf.kindle.expect("unable to find kindle config"))
+            }
         }
     }
 }

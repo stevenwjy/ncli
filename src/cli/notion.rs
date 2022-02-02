@@ -1,9 +1,8 @@
 use std::path::PathBuf;
 
+use anyhow::Result;
 use clap::{Args, Subcommand};
-use log::{debug, error, info};
 
-use crate::exec::Exec;
 use crate::notion;
 
 #[derive(Args, Debug)]
@@ -12,9 +11,9 @@ pub struct Subcli {
     command: Command,
 }
 
-impl Exec for Subcli {
-    fn run(&self) {
-        self.command.run();
+impl Subcli {
+    pub fn run(&self) -> Result<()> {
+        self.command.run()
     }
 }
 
@@ -23,8 +22,8 @@ enum Command {
     Export(ExportCommand),
 }
 
-impl Exec for Command {
-    fn run(&self) {
+impl Command {
+    pub fn run(&self) -> Result<()> {
         match self {
             Command::Export(subcmd) => subcmd.run(),
         }
@@ -35,28 +34,26 @@ impl Exec for Command {
 struct ExportCommand {
     /// Path to the zip file exported from Notion. Note that since Notion
     /// by default gives you a ZIP file, you need to unzip it first.
-    #[clap(short, long, parse(from_os_str))]
+    #[clap(long, parse(from_os_str))]
     source: PathBuf,
 
     /// Path to the target location after the conversion.
-    #[clap(short, long, parse(from_os_str))]
+    #[clap(long, parse(from_os_str))]
     target: PathBuf,
 
     /// If force argument is provided, the current target directory will be
     /// removed if it exists.
-    #[clap(short, long)]
+    #[clap(long)]
     force: bool,
 
     /// If clean argument is provided, the source directory will be removed
     /// when the export operation finishes.
-    #[clap(short, long)]
+    #[clap(long)]
     clean: bool,
 }
 
-impl Exec for ExportCommand {
-    fn run(&self) {
-        debug!("Running notion export command: {:?}", self);
-
+impl ExportCommand {
+    pub fn run(&self) -> Result<()> {
         let opts = notion::ExportOpts {
             source: self.source.clone(),
             target: self.target.clone(),
@@ -64,9 +61,6 @@ impl Exec for ExportCommand {
             clean: self.clean,
         };
 
-        match notion::export(opts) {
-            Ok(_) => info!("Command has been executed successfully!"),
-            Err(err) => error!("Error occured: {:?}", err),
-        }
+        notion::export(opts)
     }
 }

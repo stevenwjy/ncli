@@ -1,6 +1,6 @@
-use std::io::BufWriter;
+use std::fs;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::{fs, io::Write};
 
 use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;

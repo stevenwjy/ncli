@@ -1,3 +1,6 @@
+mod annotation;
+mod book;
+mod client;
 mod config;
 mod export;
 
