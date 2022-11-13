@@ -114,15 +114,21 @@ fn validate_source(path: &PathBuf) -> Result<PathBuf> {
 #[derive(Debug)]
 struct Entry {
     name: String,
-    version: String,
     path: PathBuf,
     kind: EntryKind,
 }
 
 #[derive(Debug)]
 enum EntryKind {
-    File { extension: String },
-    Dir { children: Vec<Entry> },
+    Dir {
+        version: String,
+        children: Vec<Entry>,
+    },
+    Page {
+        version: String,
+        extension: String,
+    },
+    Asset,
 }
 
 fn build_entry(path: &PathBuf) -> Result<Entry> {
@@ -131,62 +137,81 @@ fn build_entry(path: &PathBuf) -> Result<Entry> {
         .ok_or(anyhow!("name not found"))?
         .to_str()
         .ok_or(anyhow!("unable to convert file name to string"))?;
-    let caps = VERSIONED_NAME_RE
-        .captures(file_name)
-        .ok_or(anyhow!("invalid versioned file name"))?;
 
-    let name = String::from(caps.get(1).unwrap().as_str());
-    let version = String::from(caps.get(2).unwrap().as_str());
+    // Entry of type asset will not follow this versioning convention.
+    // WARN: Could have misclassification here if it turns out an asset file name adheres to the regex.
+    if let Some(caps) = VERSIONED_NAME_RE.captures(file_name) {
+        let name = String::from(caps.get(1).unwrap().as_str());
+        let version = String::from(caps.get(2).unwrap().as_str());
 
-    if path.is_dir() {
-        let mut children = vec![];
-        for child in fs::read_dir(path)? {
-            children.push(build_entry(&child?.path())?);
+        if path.is_dir() {
+            let mut children = vec![];
+            for child in fs::read_dir(path)? {
+                children.push(build_entry(&child?.path())?);
+            }
+
+            Ok(Entry {
+                name,
+                path: path.clone(),
+                kind: EntryKind::Dir { version, children },
+            })
+        } else {
+            let extension = String::from(caps.get(3).unwrap().as_str());
+
+            Ok(Entry {
+                name,
+                path: path.clone(),
+                kind: EntryKind::Page { version, extension },
+            })
         }
-
-        return Ok(Entry {
-            name,
-            version,
-            path: path.clone(),
-            kind: EntryKind::Dir { children },
-        });
     } else {
-        let extension = String::from(caps.get(3).unwrap().as_str());
-
-        return Ok(Entry {
-            name,
-            version,
+        Ok(Entry {
+            name: file_name.to_string(),
             path: path.clone(),
-            kind: EntryKind::File { extension },
-        });
+            kind: EntryKind::Asset,
+        })
     }
 }
 
 fn build_target(path: &Path, entry: &Entry) -> Result<()> {
-    if let EntryKind::Dir { children } = &entry.kind {
+    if let EntryKind::Dir { version, children } = &entry.kind {
         let version_file = fs::File::create(path.join(VERSION_FILE_NAME))?;
         let mut w = BufWriter::new(version_file);
 
-        writeln!(&mut w, "version: {}", entry.version)?;
+        writeln!(&mut w, "version: {}", version)?;
 
         let mut has_file = false;
         for child in children.iter() {
-            if let EntryKind::File { extension } = &child.kind {
-                let file_name = format!("{}.{}", child.name, extension);
-                fs::copy(&child.path, path.join(&file_name))?;
+            if !has_file {
+                // Only write this if there is at least one file
+                writeln!(&mut w)?;
+                writeln!(&mut w, "Entries:")?;
+                has_file = true;
+            }
 
-                if !has_file {
-                    // Only write this if there is at least one file
-                    writeln!(&mut w)?;
-                    writeln!(&mut w, "files:")?;
-                    has_file = true;
+            match &child.kind {
+                EntryKind::Page { version, extension } => {
+                    let file_name = format!("{}.{}", child.name, extension);
+                    fs::copy(&child.path, path.join(&file_name))?;
+
+                    writeln!(&mut w, "- '[Page] {}': '{}'", file_name, version)?;
                 }
+                EntryKind::Asset => {
+                    let file_name = child.name.clone();
+                    fs::copy(&child.path, path.join(&file_name))?;
 
-                writeln!(&mut w, "- '{}': '{}'", file_name, child.version)?;
-            } else {
-                let child_path = path.join(&child.name);
-                fs::create_dir(&child_path)?;
-                build_target(&child_path, child)?;
+                    writeln!(&mut w, "- '[Asset] {}'", file_name)?;
+                }
+                EntryKind::Dir {
+                    version,
+                    children: _,
+                } => {
+                    let child_path = path.join(&child.name);
+                    fs::create_dir(&child_path)?;
+                    build_target(&child_path, child)?;
+
+                    writeln!(&mut w, "- '[Dir] {}': '{}'", child.name, version)?;
+                }
             }
         }
     } else {
