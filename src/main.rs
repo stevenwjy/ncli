@@ -1,6 +1,7 @@
 use clap::Parser;
 use log::{error, info};
 
+mod audible;
 mod cli;
 mod config;
 mod kindle;

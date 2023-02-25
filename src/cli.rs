@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use log::debug;
 
+mod audible;
 mod kindle;
 mod notion;
 
@@ -39,12 +40,14 @@ impl Cli {
 enum Command {
     Notion(notion::Subcli),
     Kindle(kindle::Subcli),
+    Audible(audible::Subcli),
 }
 
 impl Command {
     fn run(&self, conf: Config) -> Result<()> {
         match self {
             Command::Notion(subcli) => subcli.run(), // we don't really need config for now
+            Command::Audible(subcli) => subcli.run(), // we don't really need config for now
             Command::Kindle(subcli) => {
                 subcli.run(conf.kindle.expect("unable to find kindle config"))
             }

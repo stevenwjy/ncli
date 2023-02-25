@@ -4,9 +4,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
-use regex::Regex;
-
 use log::{info, warn};
+use regex::Regex;
 
 lazy_static! {
     static ref EXPORT_NAME_RE: Regex =
