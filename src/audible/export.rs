@@ -265,14 +265,16 @@ impl BookExporter {
         } else {
             writeln!(&mut self.w, "last_heard: -")?;
         }
-
-        if let Some(path) = &self.pdf_path {
-            writeln!(&mut self.w, "pdf: [link](./{}.pdf)", self.title)?;
-        }
-
         writeln!(&mut self.w, "")?;
         writeln!(&mut self.w, "---")?;
         writeln!(&mut self.w, "")?;
+
+        if self.pdf_path.is_some() {
+            writeln!(&mut self.w, "PDF: [link](./{}.pdf)", self.title)?;
+            writeln!(&mut self.w, "")?;
+            writeln!(&mut self.w, "---")?;
+            writeln!(&mut self.w, "")?;
+        }
 
         Ok(())
     }
