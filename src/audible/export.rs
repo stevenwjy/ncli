@@ -4,7 +4,7 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
-use log::{info, warn};
+use log::{debug, info, warn};
 
 use crate::audible::api::{Chapter, GetAnnotationsResponse, GetChaptersResponse};
 
@@ -31,7 +31,7 @@ pub fn export(opts: ExportOpts) -> Result<()> {
         }
 
         warn!(
-            "Target path '{:?}' already exists. Removing it since force option is used.",
+            "target path '{:?}' already exists. Removing it since force option is used.",
             opts.target
         );
         if opts.target.is_dir() {
@@ -42,12 +42,12 @@ pub fn export(opts: ExportOpts) -> Result<()> {
     }
 
     // Create the target directory
-    info!("Creating target directory: {:?}", opts.target);
+    info!("creating target directory: {:?}", opts.target);
     fs::create_dir_all(&opts.target)?;
 
     let mut exporters = get_book_exporters(&opts.source, &opts.target)?;
 
-    info!("Building target directory");
+    info!("building target directory");
     for exporter in exporters.iter_mut() {
         info!("Building book: {}", exporter.title);
         exporter.write_all()?;
@@ -55,11 +55,11 @@ pub fn export(opts: ExportOpts) -> Result<()> {
 
     // Optionally remove the source dir
     if opts.clean {
-        info!("Removing the source directory");
+        info!("removing the source directory");
         fs::remove_file(&opts.source)?;
     }
 
-    info!("Export operation has been executed successfully");
+    info!("export operation has been executed successfully");
 
     Ok(())
 }
@@ -77,7 +77,7 @@ fn get_book_exporters(source_dir: &PathBuf, target_dir: &PathBuf) -> Result<Vec<
         let path = item?.path();
         let file_name = path
             .file_name()
-            .ok_or(anyhow!("unknown file name"))?
+            .ok_or(anyhow!("unknown file_name"))?
             .to_str()
             .unwrap();
 
@@ -146,7 +146,7 @@ fn get_book_exporters(source_dir: &PathBuf, target_dir: &PathBuf) -> Result<Vec<
         }
 
         let chapter = {
-            info!(
+            debug!(
                 "reading file: {}",
                 entry.chapter.as_ref().unwrap().to_str().unwrap()
             );
@@ -157,7 +157,7 @@ fn get_book_exporters(source_dir: &PathBuf, target_dir: &PathBuf) -> Result<Vec<
         let mut annotation = None;
         if let Some(annotation_path) = &entry.annotation {
             annotation = Some({
-                info!("reading file: {}", annotation_path.to_str().unwrap());
+                debug!("reading file: {}", annotation_path.to_str().unwrap());
                 let text = fs::read_to_string(annotation_path)?;
                 serde_json::from_str::<GetAnnotationsResponse>(&text)
             }?);
@@ -239,7 +239,7 @@ impl BookExporter {
         }
 
         let path = self.pdf_path.clone().unwrap();
-        info!("copying file: {}", path.to_str().unwrap());
+        debug!("copying file: {}", path.to_str().unwrap());
         fs::copy(path, self.target_dir.join(format!("{}.pdf", self.title)))?;
 
         Ok(())
@@ -318,7 +318,7 @@ impl BookExporter {
             writeln!(
                 &mut self.w,
                 "**Last modified:** {}",
-                annotation.creation_time
+                annotation.last_modification_time
             )?;
             writeln!(&mut self.w, "")?;
             // TODO: Convert clip range into more readable value (e.g., identify based on chapter start and end ts)
@@ -351,11 +351,9 @@ fn parse_annotations(records: &Vec<Record>) -> Vec<Annotation> {
         }
 
         let mut note = None;
-        let mut note_version = None;
         if let Some(meta) = &record.metadata {
             if meta.note.is_some() {
                 note = Some(meta.note.clone().unwrap());
-                note_version = Some(meta.c_version.parse().unwrap());
             }
         }
 
@@ -363,12 +361,8 @@ fn parse_annotations(records: &Vec<Record>) -> Vec<Annotation> {
             start_position: record.start_position.clone().parse().unwrap(),
             end_position: record.end_position.clone().unwrap().parse().unwrap(),
             creation_time: record.creation_time.clone(),
-
-            annotation_id: record.annotation_id.clone().unwrap(),
             last_modification_time: record.last_modification_time.clone().unwrap(),
-
-            note: note,
-            note_version: note_version,
+            note,
         });
     }
 
@@ -378,12 +372,10 @@ fn parse_annotations(records: &Vec<Record>) -> Vec<Annotation> {
 struct Annotation {
     pub start_position: u32,
     pub end_position: u32,
-    pub creation_time: String,
 
-    pub annotation_id: String,
+    pub creation_time: String,
     pub last_modification_time: String,
 
     // Optional note attached to the clip
     pub note: Option<String>,
-    pub note_version: Option<u32>,
 }

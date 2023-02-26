@@ -1,7 +1,6 @@
+use anyhow::{anyhow, Result};
 use fantoccini::{Client as WebClient, ClientBuilder as WebClientBuilder, Locator};
 use serde_json::json;
-
-use anyhow::{anyhow, Result};
 
 use crate::kindle::annotation::AnnotationList;
 use crate::kindle::book::{Book, BookLibrary};

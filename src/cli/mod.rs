@@ -4,11 +4,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use log::debug;
 
+use crate::config::Config;
+
 mod audible;
 mod kindle;
 mod notion;
-
-use crate::config::Config;
 
 #[derive(Parser, Debug)]
 #[clap(name = "ncli", version = "0.1.0")]
@@ -29,28 +29,26 @@ pub struct Cli {
 impl Cli {
     pub fn run(&self) -> Result<()> {
         debug!("Running command: {:?}", self);
-
         let conf = Config::load(self.config.clone())?;
-
         self.command.run(conf)
     }
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    Notion(notion::Subcli),
-    Kindle(kindle::Subcli),
     Audible(audible::Subcli),
+    Kindle(kindle::Subcli),
+    Notion(notion::Subcli),
 }
 
 impl Command {
     fn run(&self, conf: Config) -> Result<()> {
         match self {
-            Command::Notion(subcli) => subcli.run(), // we don't really need config for now
-            Command::Audible(subcli) => subcli.run(), // we don't really need config for now
+            Command::Audible(subcli) => subcli.run(),
             Command::Kindle(subcli) => {
                 subcli.run(conf.kindle.expect("unable to find kindle config"))
             }
+            Command::Notion(subcli) => subcli.run(),
         }
     }
 }
