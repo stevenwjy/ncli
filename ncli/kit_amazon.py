@@ -3,13 +3,16 @@ A module for processing and managing Amazon data.
 """
 from __future__ import annotations
 
+import getpass
 import os.path
-from typing import List, Optional
+from typing import List, Optional, Union
 from datetime import datetime
 from pathlib import Path
 
-import getpass
+import click
+import requests
 import toml
+import tqdm
 from pydantic import BaseModel, Field  # pylint: disable=no-name-in-module
 
 from audible import Authenticator
@@ -345,7 +348,7 @@ def export_to_markdown(
                     start_time = format_duration_from_ms(
                         annotation.clip_start_ms)
                     end_time = format_duration_from_ms(annotation.clip_end_ms)
-                    f.write(f'Clip: [{start_time}, {end_time}]\n')
+                    f.write(f'- Clip: [{start_time}, {end_time}]\n')
                 if annotation.location:
                     # Note that this is only for Kindle
                     f.write('- ')
@@ -363,6 +366,117 @@ def export_to_markdown(
                 if annotation.note:
                     f.write("**Note:**\n")
                     f.write(f"{annotation.note}\n")
-                    f.write('\n')
 
                 f.write('\n---\n\n')
+
+
+class Downloader:
+    """
+    This code is based on the implementation found at:
+    https://github.com/mkb79/audible-cli/blob/59ec48189d32cf1e0054be05650f35d83bafdfdb/src/audible_cli/utils.py#L170
+
+    Modifications have been made to adapt the code to our specific use case and requirements.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        file: Union[Path, str],
+        client: requests.Session,
+        overwrite_existing: bool,
+        content_type: Optional[Union[List[str], str]] = None
+    ) -> None:
+        self._url = url
+        self._file = Path(file).resolve()
+        self._tmp_file = self._file.with_suffix(".tmp")
+        self._client = client
+        self._overwrite_existing = overwrite_existing
+
+        if isinstance(content_type, str):
+            content_type = [content_type, ]
+        self._expected_content_type = content_type
+
+    def _progressbar(self, total: int):
+        return tqdm.tqdm(
+            desc=click.format_filename(self._file, shorten=True),
+            total=total,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024
+        )
+
+    def _file_okay(self):
+        if not self._file.parent.is_dir():
+            print(f"Folder {self._file.parent} doesn't exists! Skip download")
+            return False
+
+        if self._file.exists() and not self._file.is_file():
+            print(f"Object {self._file} exists but is no file. Skip download")
+            return False
+
+        if self._file.is_file() and not self._overwrite_existing:
+            print(f"File {self._file} already exists. Skip download")
+            return False
+
+        return True
+
+    def _postpare(self, elapsed, status_code, length, content_type):
+        if not 200 <= status_code < 400:
+            try:
+                msg = self._tmp_file.read_text()
+            except:  # pylint: disable=bare-except
+                msg = "Unknown"
+            print(f"Error downloading {self._file}. Message: {msg}")
+            return False
+
+        if length is not None:
+            downloaded_size = self._tmp_file.stat().st_size
+            length = int(length)
+            if downloaded_size != length:
+                print(
+                    f"Error downloading {self._file}. File size missmatch. "
+                    f"Expected size: {length}; Downloaded: {downloaded_size}"
+                )
+                return False
+
+        if self._expected_content_type is not None:
+            if content_type not in self._expected_content_type:
+                try:
+                    msg = self._tmp_file.read_text()
+                except:  # pylint: disable=bare-except
+                    msg = "Unknown"
+                print(
+                    f"Error downloading {self._file}. Wrong content type. "
+                    f"Expected type(s): {self._expected_content_type}; "
+                    f"Got: {content_type}; Message: {msg}"
+                )
+                return False
+
+        file = self._file
+        tmp_file = self._tmp_file
+        if file.exists() and self._overwrite_existing:
+            i = 0
+            while file.with_suffix(f"{file.suffix}.old.{i}").exists():
+                i += 1
+            file.rename(file.with_suffix(f"{file.suffix}.old.{i}"))
+        tmp_file.rename(file)
+        print(f"File {self._file} downloaded in {elapsed}.")
+        return True
+
+    def _load(self):
+        r = self._client.get(self._url, follow_redirects=True)
+        length = r.headers.get("Content-Length")
+        content_type = r.headers.get("Content-Type")
+        with open(self._tmp_file, mode="wb") as f:
+            f.write(r.content)
+        return self._postpare(r.elapsed, r.status_code, length, content_type)
+
+    def run(self):
+        if not self._file_okay():
+            return False
+        try:
+            self._load()
+        finally:
+            # Remove tmp file
+            if self._tmp_file.exists():
+                self._tmp_file.unlink()
