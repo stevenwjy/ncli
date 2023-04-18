@@ -176,7 +176,7 @@ class ExportIndex(BaseModel):
         with open(path, "w", encoding='utf-8') as file:
             file.write(index_str)
 
-    def check_book(self, book: Book) -> bool:
+    def check_book(self, book: Book, skip_check: bool = False) -> bool:
         """
         This function checks the book against the index. It returns a boolean that indicates whether the
         book data (e.g., annotations) should be further fetched or not.
@@ -215,17 +215,20 @@ class ExportIndex(BaseModel):
             #       can simply reopen the book on the next day, which will trigger the prompt again, or perhaps
             #       update some metadata in the index which could trigger a fetch prompt.
             if indexed_book.info == book:
-                return False
-
-            # The book metadata has been changed. In most cases, this is probably because a user re-opens the book.
-            print("\nFound a book that has been modified:")
-            print(f"- Old: {indexed_book.info}")
-            print(f"- New: {book}\n")
+                # Only skip if there's no special skip_check flag, which is usually used if one wants to re-export
+                # the entire notebook (e.g., because of changes in note formatting).
+                if not skip_check:
+                    return False
+            else:
+                # The book metadata has been changed. In most cases, this is probably because a user re-opens the book.
+                print("\nFound a book that has been modified:")
+                print(f"- Old: {indexed_book.info}")
+                print(f"- New: {book}\n")
 
             # Ask the user first whether they want to fetch the updated annotations
 
             # If yes, then we will automatically update the index to reflect the latest metadata
-            if prompt_user("Do you want to fetch the latest data for this book?"):
+            if skip_check or prompt_user("Do you want to fetch the latest data for this book?"):
                 indexed_book.info = book
                 indexed_book.last_updated_time = current_datetime
                 return True
@@ -252,7 +255,7 @@ class ExportIndex(BaseModel):
         item.checked = True
 
         # If yes, we will automatically update the index as well
-        if prompt_user("Do you want to fetch the book data?"):
+        if skip_check or prompt_user("Do you want to fetch the book data?"):
             self.books.append(item)
             return True
 
@@ -355,7 +358,7 @@ def export_to_markdown(
                     if annotation.page:
                         f.write(f'Page: {annotation.page} | ')
                     f.write(f'Location: {annotation.location} [(kindle link)]'
-                            '(kindle://book?action=open&asin={book.asin}&location={annotation.location})\n')
+                            f'(kindle://book?action=open&asin={book.asin}&location={annotation.location})\n')
 
                 # Main content
                 f.write('\n')

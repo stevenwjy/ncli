@@ -211,6 +211,7 @@ class Client:
 def export(
     config: Config,
     target: Path,
+    skip_check: bool,
 ) -> None:
     """
     Exports kindle data
@@ -223,7 +224,7 @@ def export(
     export_index = ExportIndex.load_or_default(index_file_path)
 
     for book in book_library:
-        if export_index.check_book(book):
+        if export_index.check_book(book, skip_check=skip_check):
             annotations = client.get_annotations(book)
 
             # Note that we will generate the book name using its title and use the ".md" extension since it is
@@ -232,8 +233,13 @@ def export(
 
             export_to_markdown(book_path, book, annotations=annotations)
 
+            # Print some info if all books are expected to be exported.
+            if skip_check:
+                print(f'Exported book: {book}')
+
     # Log warning(s) for book(s) that are left unchecked.
-    export_index.warn_unchecked_books()
+    if not skip_check:
+        export_index.warn_unchecked_books()
 
     # Save back the index
     export_index.save(index_file_path)

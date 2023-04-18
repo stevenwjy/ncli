@@ -64,14 +64,16 @@ def kindle_cli(_: click.Context) -> None:
 
 @kindle_cli.command(name='export')
 @click.option('--target', type=click.Path(), help='Path to the target location for the export.')
+@click.option('--skip-check', is_flag=True, help='Always re-export all books.')
 @click.pass_context
 def kindle_export(
     ctx: click.Context,
     target: str,
+    skip_check: bool,
 ) -> None:
     """Kindle export command."""
     config: Config = ctx.obj['config']
-    kindle.export(config.amazon, Path(target).expanduser())
+    kindle.export(config.amazon, Path(target).expanduser(), skip_check)
 
 
 @cli.group(name='notion')
