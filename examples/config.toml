@@ -1,0 +1,10 @@
+audible_export_dir = "/path/to/audible/data"
+kindle_export_dir = "/path/to/kindle/data"
+notion_export_dir = "/path/to/notion/data"
+
+[amazon]
+auth_file = "filename.json"
+country_code = "us"
+
+[youtube]
+export_dir = "/path/to/youtube/data"

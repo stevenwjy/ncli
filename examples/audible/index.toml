@@ -1,0 +1,26 @@
+[[books]]
+last_updated_time = "Wed, 1 Jan 2023 00:00:01 +0800"
+
+[books.info]
+asin = "ABCDEFGH"
+title = "Example Book A"
+subtitle = "Example Subtitle A"
+author = "Author A, Author B"
+image_url = "https://example.com"
+publication_date = "2023-01-01"
+purchase_date = "2023-01-01"
+last_opened_date = "Wed, 1 Jan 2023 00:00:01 +0800"
+
+[[books]]
+last_updated_time = "Wed, 1 Jan 2023 00:00:01 +0800"
+
+[books.info]
+asin = "HGFEDCBA"
+title = "Example Book B"
+subtitle = "Example Subtitle B"
+author = "Author A, Author B"
+image_url = "https://example.com"
+pdf_url = "https://example.com"
+publication_date = "2023-01-01"
+purchase_date = "2023-01-01"
+last_opened_date = "Wed, 1 Jan 2023 00:00:01 +0800"
