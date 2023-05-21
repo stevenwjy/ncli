@@ -332,6 +332,7 @@ def export_to_markdown(
                         write_chapters(chapter.subchapters, depth+1)
 
             write_chapters(chapters, 0)
+            f.write('\n')
 
         # Write annotations
         if annotations:

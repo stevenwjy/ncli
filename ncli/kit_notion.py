@@ -12,7 +12,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List,  Union
+from typing import List, Union
 
 TMP_DIR = "/tmp/ncli"
 VERSION_FILE_NAME = "version.txt"

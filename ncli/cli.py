@@ -4,23 +4,31 @@ This module provides the main CLI for managing notes using Audible, Kindle, and 
 """
 
 from pathlib import Path
-from pydantic import BaseModel  # pylint: disable=no-name-in-module
+from typing import Optional
+
 import click
 import toml
-
+from pydantic import BaseModel  # pylint: disable=no-name-in-module
 
 from ncli import constants, \
     kit_amazon as amazon, \
     kit_audible as audible, \
     kit_kindle as kindle, \
-    kit_notion as notion
+    kit_notion as notion, \
+    kit_youtube as youtube
 
 
 class Config(BaseModel):
     """
     General config for the CLI
     """
+    audible_export_dir: str = ""
+    kindle_export_dir: str = ""
+    notion_export_dir: str = ""
+
     amazon: amazon.Config
+
+    youtube: youtube.Config
 
 
 @click.group()
@@ -40,7 +48,8 @@ def cli(ctx: click.Context) -> None:
 
 
 @cli.group(name='audible')
-def audible_cli() -> None:
+@click.pass_context
+def audible_cli(_: click.Context) -> None:
     """Audible group command."""
 
 
@@ -49,10 +58,14 @@ def audible_cli() -> None:
 @click.pass_context
 def audible_export(
     ctx: click.Context,
-    target: str,
+    target: Optional[str],
 ) -> None:
     """Audible export command."""
     config: Config = ctx.obj['config']
+    target = target if target is not None else config.audible_export_dir
+    if target is None:
+        raise ValueError('unknown export target')
+
     audible.export(config.amazon, Path(target).expanduser())
 
 
@@ -68,16 +81,21 @@ def kindle_cli(_: click.Context) -> None:
 @click.pass_context
 def kindle_export(
     ctx: click.Context,
-    target: str,
+    target: Optional[str],
     skip_check: bool,
 ) -> None:
     """Kindle export command."""
     config: Config = ctx.obj['config']
+    target = target if target is not None else config.kindle_export_dir
+    if target is None:
+        raise ValueError('unknown export target')
+
     kindle.export(config.amazon, Path(target).expanduser(), skip_check)
 
 
 @cli.group(name='notion')
-def notion_cli() -> None:
+@click.pass_context
+def notion_cli(_: click.Context) -> None:
     """Notion group command."""
 
 
@@ -86,13 +104,20 @@ def notion_cli() -> None:
 @click.option('--target', type=click.Path(), help='Path to the target location after the conversion.')
 @click.option('--force', is_flag=True, help='Removes the current target directory if it exists.')
 @click.option('--clean', is_flag=True, help='Removes the source directory when the export operation finishes.')
+@click.pass_context
 def notion_export(
+    ctx: click.Context,
     source: str,
-    target: str,
+    target: Optional[str],
     force: bool,
     clean: bool,
 ) -> None:
     """Notion export command."""
+    config: Config = ctx.obj['config']
+    target = target if target is not None else config.notion_export_dir
+    if target is None:
+        raise ValueError('unknown export target')
+
     notion.export(
         Path(source).expanduser(),
         Path(target).expanduser(),
@@ -100,3 +125,33 @@ def notion_export(
         clean,
     )
 
+
+@cli.group(name='youtube')
+@click.pass_context
+def youtube_cli(_: click.Context) -> None:
+    """YouTube group command."""
+
+
+@youtube_cli.command(name='export')
+@click.option('--source', type=str, help='URL to the YouTube video')
+@click.option('--target', type=click.Path(), help='Path to the target export directory')
+@click.option('--summarize', is_flag=True, help='Summarizes the video transcript')
+@click.pass_context
+def youtube_export(
+    ctx: click.Context,
+    source: str,
+    target: Optional[str],
+    summarize: bool,
+):
+    """Export YouTube video data"""
+    config: Config = ctx.obj['config']
+    target = target if target is not None else config.youtube.export_dir
+    if target is None:
+        raise ValueError('unknown export target')
+
+    youtube.export(
+        source,
+        Path(target).expanduser(),
+        summarize,
+        config.youtube,
+    )

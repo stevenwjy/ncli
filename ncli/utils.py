@@ -3,7 +3,36 @@
 The `utils` module contains a collection of utility functions that can be used across projects.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
+
+
+def format_duration(duration: float) -> str:
+    """
+    Formats a duration into a time string in the format of 'HH:MM:SS' or 'MM:SS'.
+
+    This function accepts a duration in seconds and converts it into a formatted string. If the duration
+    is more than an hour, it formats the string in the 'HH:MM:SS' format. Otherwise, it formats the string
+    in the 'MM:SS' format.
+
+    Parameters:
+    duration (float): The duration in seconds.
+
+    Returns:
+    str: The duration formatted as a string in 'HH:MM:SS' or 'MM:SS' format.
+
+    Examples:
+    >>> format_duration(3661)
+    '1:01:01'
+
+    >>> format_duration(61)
+    '1:01'
+    """
+    time_delta = timedelta(seconds=duration)
+    hours, remainder = divmod(time_delta.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
 
 
 def format_duration_from_ms(value: int) -> str:
