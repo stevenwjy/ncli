@@ -30,17 +30,17 @@ class Config(BaseModel):
     # Defaults to 15 mins, which is typically near borderline to fit within 8K context length.
     summary_time_window_minutes: int = 15
 
-    # Defaults to 'gpt-3.5-turbo' since it is more widely accessible (not under limited beta) and is much cheaper
+    # Should be fine to use 'gpt-3.5-turbo', which is more accessible (not under limited beta) and is much cheaper
     # at the moment. For slightly better result, use 'gpt-4'. If you need longer context (e.g., because of longer
     # time window), you can also use `gpt-4-32k`.
     #
     # Note that you need `OPENAI_API_KEY` env var to access OpenAI API.
     #
     # If the model is set to an empty string, the summary will just be a concatenation of the texts to
-    # be summarized. This is intended to help devs who want to experiment with summarization prompts
-    # using external apps. For convenience, below is the commented code.
-    # model: str = ''
-    model: str = 'gpt-3.5-turbo'
+    # be summarized. This may be useful for those who want to do the summarization using external app
+    # (e.g., if already have ChatGPT Plus subscription).
+    model: str = ''
+    # model: str = 'gpt-3.5-turbo'
 
     prompt_system: str = 'You are a helpful assistant.'
 

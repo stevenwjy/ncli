@@ -8,6 +8,7 @@ from pathlib import Path
 import requests
 
 from bs4 import BeautifulSoup
+from click import echo
 
 from ncli.kit_amazon import Config, Authenticator, load_authenticator, \
     Book, Annotation, ExportIndex, export_to_markdown
@@ -211,7 +212,7 @@ class Client:
 def export(
     config: Config,
     target: Path,
-    skip_check: bool,
+    renew: bool,
 ) -> None:
     """
     Exports kindle data
@@ -224,7 +225,7 @@ def export(
     export_index = ExportIndex.load_or_default(index_file_path)
 
     for book in book_library:
-        if export_index.check_book(book, skip_check=skip_check):
+        if export_index.check_book(book, skip_check=renew):
             annotations = client.get_annotations(book)
 
             # Note that we will generate the book name using its title and use the ".md" extension since it is
@@ -234,11 +235,11 @@ def export(
             export_to_markdown(book_path, book, annotations=annotations)
 
             # Print some info if all books are expected to be exported.
-            if skip_check:
-                print(f'Exported book: {book}')
+            if renew:
+                echo(f'Exported book: {book}')
 
     # Log warning(s) for book(s) that are left unchecked.
-    if not skip_check:
+    if not renew:
         export_index.warn_unchecked_books()
 
     # Save back the index

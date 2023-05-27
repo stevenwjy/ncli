@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import List, Union
 
 import chardet
+from click import echo
 
 TMP_DIR = "/tmp/ncli"
 VERSION_FILE_NAME = "version.txt"
@@ -27,7 +28,6 @@ def export(
     source: Path,
     target: Path,
     force: bool,
-    clean: bool
 ) -> None:
     """
     Performs the export operation.
@@ -36,7 +36,6 @@ def export(
         source (Path): The path to the source zip file.
         target (Path): The path to the target directory for the export.
         force (bool): A flag to indicate whether to overwrite the target directory if it exists.
-        clean (bool): A flag to indicate whether to remove the source zip file after export.
 
     Returns:
         None, raises exceptions in case of errors.
@@ -48,26 +47,22 @@ def export(
         if not force:
             raise ValueError(f"Target path '{target}' already exists")
 
-        print(
+        echo(
             f"Target path '{target}' already exists. Removing it since force option is used")
         if target.is_dir():
             shutil.rmtree(target)
         else:
             os.remove(target)
 
-    print(f"Creating target directory: {target}")
+    echo(f"Creating target directory: {target}")
     os.makedirs(target, exist_ok=True)
 
-    print("Building target directory")
+    echo("Building target directory")
     _build_target(target, entry)
 
     shutil.rmtree(extracted_dir)
 
-    if clean:
-        print("Removing the source directory")
-        os.remove(source)
-
-    print("Export operation has been executed successfully")
+    echo("Export operation has been executed successfully")
 
 
 def _validate_source(path: Path) -> Path:
@@ -94,10 +89,10 @@ def _validate_source(path: Path) -> Path:
 
     if export_dest.exists():
         if export_dest.is_dir():
-            print(f"Removing dir '{export_dest}' to avoid conflict")
+            echo(f"Removing dir '{export_dest}' to avoid conflict")
             shutil.rmtree(export_dest)
         else:
-            print(f"Removing file '{export_dest}' to avoid conflict")
+            echo(f"Removing file '{export_dest}' to avoid conflict")
             os.remove(export_dest)
 
     os.makedirs(export_dest, exist_ok=True)
@@ -231,7 +226,7 @@ def _remove_versions(file_path: Path):
     enc = _detect_file_encoding(file_path)
     target_enc = 'utf-8'
     if enc != target_enc:
-        print(
+        echo(
             f'WARN: Changing file {file_path} encofing from {enc} to {target_enc}')
 
     with open(file_path, 'r', encoding=target_enc) as file:

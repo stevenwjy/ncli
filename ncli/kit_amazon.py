@@ -3,30 +3,40 @@ A module for processing and managing Amazon data.
 """
 from __future__ import annotations
 
+import io
 import getpass
 import os.path
+
 from typing import List, Optional, Union
 from datetime import datetime
 from pathlib import Path
 
 import click
+import httpx
 import requests
 import toml
-import tqdm
+from PIL import Image
 from pydantic import BaseModel, Field  # pylint: disable=no-name-in-module
+from click import echo, secho, prompt
 
 from audible import Authenticator
 from audible.auth import detect_file_encryption
+from audible.login import default_login_url_callback
 
 from ncli import constants
-from ncli.utils import prompt_user, format_duration_from_ms
+from ncli.utils import prompt_user, format_duration_from_ms, toml_dumps_with_newline
+
+AVAILABLE_COUNTRY_CODES: List[str] = [
+    "us", "ca", "uk", "au", "fr", "de", "es", "jp", "it", "in"]
+DEFAULT_AUTH_FILE_EXTENSION: str = "json"
+DEFAULT_AUTH_FILE_ENCRYPTION: str = "json"
 
 
 class Config(BaseModel):
     """
     Config for Amazon products.
     """
-    auth_file: Optional[str] = None
+    auth_file: str = ''
     country_code: str = 'us'
 
 
@@ -158,21 +168,7 @@ class ExportIndex(BaseModel):
         """
         Save the export index into the specified path.
         """
-        def dumps_with_newline(data):
-            toml_str = toml.dumps(data)
-            lines = toml_str.splitlines()
-            formatted_lines = []
-
-            for line in lines:
-                if len(formatted_lines) > 0 and line.startswith("[["):
-                    formatted_lines.append("")
-                formatted_lines.append(line)
-
-            formatted_lines.append("")  # newline at the end
-
-            return "\n".join(formatted_lines)
-
-        index_str = dumps_with_newline(self.dict())
+        index_str = toml_dumps_with_newline(self.dict())
         with open(path, "w", encoding='utf-8') as file:
             file.write(index_str)
 
@@ -221,9 +217,9 @@ class ExportIndex(BaseModel):
                     return False
             else:
                 # The book metadata has been changed. In most cases, this is probably because a user re-opens the book.
-                print("\nFound a book that has been modified:")
-                print(f"- Old: {indexed_book.info}")
-                print(f"- New: {book}\n")
+                echo("\nFound a book that has been modified:")
+                echo(f"- Old: {indexed_book.info}")
+                echo(f"- New: {book}\n")
 
             # Ask the user first whether they want to fetch the updated annotations
 
@@ -245,8 +241,8 @@ class ExportIndex(BaseModel):
         # Note that if we decide to add a new book to the index, it will always be appended to the back of the
         # list. Maybe can consider to make the list sorted based on the last updated time in the future.
 
-        print("\nUnable to find information about the following book in the index:")
-        print(f"  {book}\n")
+        echo("\nUnable to find information about the following book in the index:")
+        echo(f"  {book}\n")
 
         # Ask the user first whether they want to fetch the book
 
@@ -273,7 +269,7 @@ class ExportIndex(BaseModel):
         """
         for book in self.books:
             if not book.checked:
-                print(f"Warning: Book {book.info} has not been checked")
+                echo(f"Warning: Book {book.info} has not been checked")
 
 
 def export_to_markdown(
@@ -374,6 +370,102 @@ def export_to_markdown(
                 f.write('\n---\n\n')
 
 
+# ---
+# Authentication
+#
+# The code in this section are originally from:
+# https://github.com/mkb79/audible-cli/blob/59ec48189d32cf1e0054be05650f35d83bafdfdb/src/audible_cli/utils.py#L77
+#
+# Modifications have been made to adapt the code to our specific use case and requirements.
+# ---
+
+
+def prompt_captcha_callback(captcha_url: str) -> str:
+    """Helper function for handling captcha."""
+
+    echo("Captcha found")
+    if click.confirm("Open Captcha with default image viewer", default=True):
+        captcha = httpx.get(captcha_url).content
+        f = io.BytesIO(captcha)
+        img = Image.open(f)
+        img.show()
+    else:
+        echo(
+            "Please open the following url with a web browser "
+            "to get the captcha:"
+        )
+        echo(captcha_url)
+
+    guess = prompt("Answer for CAPTCHA")
+    return str(guess).strip().lower()
+
+
+def prompt_otp_callback() -> str:
+    """Helper function for handling 2-factor authentication."""
+
+    echo("2FA is activated for this account.")
+    guess = prompt("Please enter OTP Code")
+    return str(guess).strip().lower()
+
+
+def prompt_external_callback(url: str) -> str:
+    # import readline to prevent issues when input URL in
+    # CLI prompt when using macOS
+    try:
+        import readline  # noqa
+    except ImportError:
+        pass
+
+    return default_login_url_callback(url)
+
+
+def build_auth_file(
+    filename: Union[str, Path],
+    username: Optional[str],
+    password: Optional[str],
+    country_code: str,
+    file_password: Optional[str] = None,
+    external_login: bool = False,
+    with_username: bool = False
+) -> None:
+    echo()
+    secho("Login with amazon to your audible account now.", bold=True)
+
+    file_options = {"filename": Path(filename)}
+    if file_password:
+        file_options.update(
+            password=file_password,
+            encryption=DEFAULT_AUTH_FILE_ENCRYPTION
+        )
+
+    if external_login:
+        auth = Authenticator.from_login_external(
+            locale=country_code,
+            with_username=with_username,
+            login_url_callback=prompt_external_callback)
+    else:
+        auth = Authenticator.from_login(
+            username=username,
+            password=password,
+            locale=country_code,
+            captcha_callback=prompt_captcha_callback,
+            otp_callback=prompt_otp_callback)
+
+    echo()
+
+    device_name = auth.device_info["device_name"]  # pylint: disable=unsubscriptable-object
+    secho(f"Successfully registered {device_name}.", bold=True)
+
+    if not filename.parent.exists():
+        filename.parent.mkdir(parents=True)
+
+    auth.to_file(**file_options)
+
+
+# ---
+# Downloader
+# ---
+
 class Downloader:
     """
     This code is based on the implementation found at:
@@ -400,26 +492,17 @@ class Downloader:
             content_type = [content_type, ]
         self._expected_content_type = content_type
 
-    def _progressbar(self, total: int):
-        return tqdm.tqdm(
-            desc=click.format_filename(self._file, shorten=True),
-            total=total,
-            unit="B",
-            unit_scale=True,
-            unit_divisor=1024
-        )
-
     def _file_okay(self):
         if not self._file.parent.is_dir():
-            print(f"Folder {self._file.parent} doesn't exists! Skip download")
+            echo(f"Folder {self._file.parent} doesn't exists! Skip download")
             return False
 
         if self._file.exists() and not self._file.is_file():
-            print(f"Object {self._file} exists but is no file. Skip download")
+            echo(f"Object {self._file} exists but is no file. Skip download")
             return False
 
         if self._file.is_file() and not self._overwrite_existing:
-            print(f"File {self._file} already exists. Skip download")
+            echo(f"File {self._file} already exists. Skip download")
             return False
 
         return True
@@ -430,14 +513,14 @@ class Downloader:
                 msg = self._tmp_file.read_text()
             except:  # pylint: disable=bare-except
                 msg = "Unknown"
-            print(f"Error downloading {self._file}. Message: {msg}")
+            echo(f"Error downloading {self._file}. Message: {msg}")
             return False
 
         if length is not None:
             downloaded_size = self._tmp_file.stat().st_size
             length = int(length)
             if downloaded_size != length:
-                print(
+                echo(
                     f"Error downloading {self._file}. File size missmatch. "
                     f"Expected size: {length}; Downloaded: {downloaded_size}"
                 )
@@ -449,7 +532,7 @@ class Downloader:
                     msg = self._tmp_file.read_text()
                 except:  # pylint: disable=bare-except
                     msg = "Unknown"
-                print(
+                echo(
                     f"Error downloading {self._file}. Wrong content type. "
                     f"Expected type(s): {self._expected_content_type}; "
                     f"Got: {content_type}; Message: {msg}"
@@ -464,7 +547,7 @@ class Downloader:
                 i += 1
             file.rename(file.with_suffix(f"{file.suffix}.old.{i}"))
         tmp_file.rename(file)
-        print(f"File {self._file} downloaded in {elapsed}.")
+        echo(f"File {self._file} downloaded in {elapsed}.")
         return True
 
     def _load(self):

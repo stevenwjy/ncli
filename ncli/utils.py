@@ -5,6 +5,9 @@ The `utils` module contains a collection of utility functions that can be used a
 
 from datetime import datetime, timedelta
 
+from click import echo
+import toml
+
 
 def format_duration(duration: float) -> str:
     """
@@ -115,4 +118,19 @@ def prompt_user(question: str) -> bool:
             return True
         if input_str == "n":
             return False
-        print("Unable to parse input. Please respond using the provided options (case-insensitive).")
+        echo("Unable to parse input. Please respond using the provided options (case-insensitive).")
+
+
+def toml_dumps_with_newline(data):
+    toml_str = toml.dumps(data)
+    lines = toml_str.splitlines()
+    formatted_lines = []
+
+    for line in lines:
+        if len(formatted_lines) > 0 and line.startswith("[["):
+            formatted_lines.append("")
+        formatted_lines.append(line)
+
+    formatted_lines.append("")  # newline at the end
+
+    return "\n".join(formatted_lines)

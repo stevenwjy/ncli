@@ -6,6 +6,7 @@ from typing import List, Optional
 from pathlib import Path
 
 import audible
+from click import echo
 
 from ncli.kit_amazon import Config, load_authenticator, \
     Book, Chapter, Annotation, ExportIndex, export_to_markdown, Downloader
@@ -125,8 +126,16 @@ class Client:
         Fetches the list of annotations for a particular book
         """
         params = {'type': 'AUDI', 'key': book.asin}
-        response = self.client.get(
-            "https://cde-ta-g7g.amazon.com/FionaCDEServiceEngine/sidecar", params=params)
+        try:
+            response = self.client.get(
+                "https://cde-ta-g7g.amazon.com/FionaCDEServiceEngine/sidecar", params=params)
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            # Note that we may fail to retrieve annotations here if the book has never had
+            # any annotations (e.g., new book).
+            echo(
+                f'Failed to retrieve annotations for book {book.title}, reason: {e}')
+            return "", []
 
         annotations_version: str = response['md5']
         annotations: List[Annotation] = []
@@ -205,6 +214,7 @@ class Client:
 def export(
     config: Config,
     target: Path,
+    renew: bool,
 ):
     """
     Exports Audible data
@@ -219,7 +229,7 @@ def export(
     export_index = ExportIndex.load_or_default(index_file_path)
 
     for book in book_library:
-        if export_index.check_book(book):
+        if export_index.check_book(book, skip_check=renew):
             chapters = client.get_chapters(book)
             annotation_version, annotations = client.get_annotations(book)
 
@@ -250,8 +260,13 @@ def export(
                 )
                 downloader.run()
 
+            # Print some info if all books are expected to be exported.
+            if renew:
+                echo(f'Exported book: {book}')
+
     # Log warning(s) for book(s) that are left unchecked.
-    export_index.warn_unchecked_books()
+    if not renew:
+        export_index.warn_unchecked_books()
 
     # Save back the index
     export_index.save(index_file_path)

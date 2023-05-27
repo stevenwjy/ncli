@@ -1,5 +1,5 @@
 [FORMAT]
-good-names=x,y,z,i,j,n,f,r
+good-names=e,x,y,z,i,j,n,f,r
 max-line-length=160
 max-locals=30
 
