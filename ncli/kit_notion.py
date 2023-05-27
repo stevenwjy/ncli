@@ -14,6 +14,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Union
 
+import chardet
+
 TMP_DIR = "/tmp/ncli"
 VERSION_FILE_NAME = "version.txt"
 EXPORT_NAME_RE = re.compile(
@@ -39,8 +41,8 @@ def export(
     Returns:
         None, raises exceptions in case of errors.
     """
-    extracted_dir = validate_source(source)
-    entry = build_entry(extracted_dir)
+    extracted_dir = _validate_source(source)
+    entry = _build_entry(extracted_dir)
 
     if target.exists():
         if not force:
@@ -57,7 +59,7 @@ def export(
     os.makedirs(target, exist_ok=True)
 
     print("Building target directory")
-    build_target(target, entry)
+    _build_target(target, entry)
 
     shutil.rmtree(extracted_dir)
 
@@ -68,7 +70,7 @@ def export(
     print("Export operation has been executed successfully")
 
 
-def validate_source(path: Path) -> Path:
+def _validate_source(path: Path) -> Path:
     """
     Validates the source zip file and extracts it to a temporary directory.
 
@@ -177,7 +179,7 @@ class Asset:
     """
 
 
-def build_entry(path: Path) -> Entry:
+def _build_entry(path: Path) -> Entry:
     """
     Builds an Entry object from the given path.
 
@@ -195,7 +197,7 @@ def build_entry(path: Path) -> Entry:
         version = match.group(2)
 
         if path.is_dir():
-            children = [build_entry(child) for child in path.iterdir()]
+            children = [_build_entry(child) for child in path.iterdir()]
             return Entry(
                 name=name,
                 path=path,
@@ -216,7 +218,34 @@ def build_entry(path: Path) -> Entry:
     )
 
 
-def build_target(path: Path, entry: Entry) -> None:
+def _detect_file_encoding(file_path):
+    with open(file_path, 'rb') as f:
+        result = chardet.detect(f.read())
+    return result['encoding']
+
+
+def _remove_versions(file_path: Path):
+    # Somehow exported files from Notion could have encodings such as 'ascii', 'Windows-1252', and 'Windows-1254'.
+    # However, if we use such encoding to read the file, sometimes there could be errors.
+    # Hence, we will just print some warnings here if we are about to change the encoding.
+    enc = _detect_file_encoding(file_path)
+    target_enc = 'utf-8'
+    if enc != target_enc:
+        print(
+            f'WARN: Changing file {file_path} encofing from {enc} to {target_enc}')
+
+    with open(file_path, 'r', encoding=target_enc) as file:
+        data = file.read()
+
+    # Remove the pattern from the data
+    data = re.sub('%20[0-9a-f]{32}', '', data)
+
+    # Write the data back to the file
+    with open(file_path, 'w', encoding=target_enc) as file:
+        file.write(data)
+
+
+def _build_target(path: Path, entry: Entry) -> None:
     """
     Builds the target directory structure based on the given Entry.
 
@@ -237,7 +266,11 @@ def build_target(path: Path, entry: Entry) -> None:
             for child in entry.kind.children:
                 if isinstance(child.kind, Page):
                     file_name = f"{child.name}.{child.kind.extension}"
-                    shutil.copy(child.path, path.joinpath(file_name))
+                    target_path = path.joinpath(file_name)
+                    shutil.copy(child.path, target_path)
+
+                    # Remove versions from the file content (esp. hyperlinks), so that we could navigate properly.
+                    _remove_versions(target_path)
 
                     f.write(
                         f"- '[Page] {file_name}': '{child.kind.version}'\n")
@@ -251,7 +284,7 @@ def build_target(path: Path, entry: Entry) -> None:
                 elif isinstance(child.kind, Dir):
                     child_path = path.joinpath(child.name)
                     os.makedirs(child_path, exist_ok=True)
-                    build_target(child_path, child)
+                    _build_target(child_path, child)
 
                     f.write(
                         f"- '[Dir] {child.name}': '{child.kind.version}'\n")
