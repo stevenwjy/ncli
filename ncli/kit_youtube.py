@@ -14,6 +14,7 @@ from pydantic import BaseModel  # pylint: disable=no-name-in-module
 
 import openai
 import pytube
+from click import echo
 from youtube_transcript_api import YouTubeTranscriptApi
 
 from ncli.utils import format_duration
@@ -40,7 +41,6 @@ class Config(BaseModel):
     # be summarized. This may be useful for those who want to do the summarization using external app
     # (e.g., if already have ChatGPT Plus subscription).
     model: str = ''
-    # model: str = 'gpt-3.5-turbo'
 
     prompt_system: str = 'You are a helpful assistant.'
 
@@ -176,14 +176,25 @@ def _create_transcript_summary_item(
             model=config.model,
             messages=[
                 {"role": "system", "content": config.prompt_system},
-                {"role": "user", "content": text},
-                {"role": "assistant", "content": config.prompt_summarize},
+                {"role": "user", "content": f'Transcript:\n"""\n{text}\n"""\n\n{config.prompt_summarize}'},
             ]
         )
-        # Temporary for debugging
-        print(response)
 
         text = response['choices'][0]['message']['content']
+
+        try:
+            # Metadata for tracking/debugging
+            response_metadata = {
+                'id': response['id'],
+                'model': response['model'],
+                'object': response['object'],
+                'usage': response['usage'],
+                'finish_reason': response['choices'][0]['finish_reason'],
+            }
+            echo(f'OpenAI metadata: {response_metadata}')
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            # Avoid failing the entire summarization just because the response format changes for the metadata.
+            echo(f'Failed to retrieve response metadata: {e}')
 
     return TranscriptItem(start_ts=start_ts, duration=end_ts-start_ts, text=text)
 

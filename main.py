@@ -1,5 +1,4 @@
-from ncli.cli import cli
+from ncli.main import main
 
 if __name__ == '__main__':
-    # pylint: disable=no-value-for-parameter
-    cli(obj={})
+    main()

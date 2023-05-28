@@ -50,9 +50,15 @@ def load_authenticator(config: Config) -> Authenticator:
         if detect_file_encryption(file_path):
             pwd = getpass.getpass('Enter auth file password: ')
 
-        return Authenticator.from_file(file_path, pwd)
+        try:
+            return Authenticator.from_file(file_path, pwd)
+        except ValueError as e:
+            if pwd:
+                raise ValueError(
+                    f'Failed to decrypt the auth file. Wrong password? Error: {e}') from e
+            raise e
 
-    raise ValueError('config without auth file not supported')
+    raise ValueError('Config without auth file not supported')
 
 
 class Book(BaseModel):
