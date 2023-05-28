@@ -1,3 +1,6 @@
+# This specific file is part of the 'ncli' project and it is licensed under the AGPL-3.0 License.
+# Please see the accompanying LICENSE-AGPL-3.0 file for more details.
+
 """
 A module for processing and managing Audible data.
 """

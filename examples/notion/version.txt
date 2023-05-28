@@ -2,4 +2,5 @@ version: a12345ca96fc458c95bbc18d82830958
 
 Entries:
 - '[Page] Home.md': '12345a0dee79420697160228a3976fef'
+- '[Page] Sample.md': 'a12345ac4c9442b2a8e7367508114dcd'
 - '[Dir] Sample': 'a12345ac4c9442b2a8e7367508114dcc'
