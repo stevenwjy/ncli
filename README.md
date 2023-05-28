@@ -182,10 +182,10 @@ ncli offers the ability to:
 Here's how:
 
 ```
-python3 main.py youtube export --target <path> --source <url>
+ncli youtube export --target <path> --source <url>
 
 # To summarize the transcript (or group them by time window):
-python3 main.py youtube export --target <path> --summarize -- source <url>
+ncli youtube export --target <path> --summarize -- source <url>
 ```
 
 The target path should be a directory where you want the YouTube data to be stored.
