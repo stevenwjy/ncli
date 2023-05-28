@@ -1,5 +1,0 @@
-audible
-openai
-pydantic
-pytube
-youtube-transcript-api
