@@ -138,7 +138,7 @@ def _summarize(transcript: Transcript, config: Config) -> Transcript:
 
     for item in transcript.items:
         within_cur_group = cur_group_start_ts is not None and \
-            item.start_ts - cur_group_start_ts < 900  # 15 minutes * 60 seconds
+            item.start_ts - cur_group_start_ts < config.summary_time_window_minutes * 60
 
         if within_cur_group:
             cur_group_end_ts = item.start_ts + item.duration
@@ -172,17 +172,16 @@ def _create_transcript_summary_item(
 
     if config.model:
         # Prereq: set OPENAI_API_KEY env var
-        response = openai.ChatCompletion.create(
-            model=config.model,
-            messages=[
-                {"role": "system", "content": config.prompt_system},
-                {"role": "user", "content": f'Transcript:\n"""\n{text}\n"""\n\n{config.prompt_summarize}'},
-            ]
-        )
-
-        text = response['choices'][0]['message']['content']
-
         try:
+            response = openai.ChatCompletion.create(
+                model=config.model,
+                messages=[
+                    {"role": "system", "content": config.prompt_system},
+                    {"role": "user", "content": f'Transcript:\n"""\n{text}\n"""\n\n{config.prompt_summarize}'},
+                ]
+            )
+            text = response['choices'][0]['message']['content']
+
             # Metadata for tracking/debugging
             response_metadata = {
                 'id': response['id'],
@@ -193,8 +192,12 @@ def _create_transcript_summary_item(
             }
             echo(f'OpenAI metadata: {response_metadata}')
         except Exception as e:  # pylint: disable=broad-exception-caught
-            # Avoid failing the entire summarization just because the response format changes for the metadata.
-            echo(f'Failed to retrieve response metadata: {e}')
+            # Avoid failing the entire summarization just because a window fails to be summarized
+            # (e.g., issue from the OpenAI API) or the response format changes for the metadata.
+            #
+            # Note that we may either end up with just concatenated transcript (if the request failed),
+            # or still have the text being summarized properly (if it failed when parsing the response metadata).
+            echo(f'Failed to retrieve response properly. Reason: {e}')
 
     return TranscriptItem(start_ts=start_ts, duration=end_ts-start_ts, text=text)
 
