@@ -218,8 +218,8 @@ messages=[
 
 Note that the transcript text has been sanitized to remove newlines and unnecessary whitespaces.
 
-By default, we use a 15-minute time window for summarizing, as longer time windows sometimes do not fit into the GPT-4
-8K context window. You can customize this time window by updating the config:
+By default, we use a 15-minute time window for summarization, as longer time windows sometimes do not fit into the
+GPT-3.5 4K context window. You can customize this time window by updating the config:
 
 ```
 ncli config set youtube.summary_time_window_minutes <int>
