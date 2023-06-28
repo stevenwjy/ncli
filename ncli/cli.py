@@ -336,12 +336,14 @@ def youtube_cli(_: click.Context) -> None:
 @youtube_cli.command(name='export')
 @click.option('--source', type=str, help='URL to the YouTube video')
 @click.option('--target', type=click.Path(), help='Path to the target export directory')
+@click.option('--transcribe', is_flag=True, help='Prints the video transcript')
 @click.option('--summarize', is_flag=True, help='Summarizes the video transcript')
 @click.pass_context
 def youtube_export(
     ctx: click.Context,
     source: str,
     target: Optional[str],
+    transcribe: bool,
     summarize: bool,
 ):
     """Export YouTube video data"""
@@ -353,6 +355,7 @@ def youtube_export(
     youtube.export(
         source,
         Path(target).expanduser(),
+        transcribe,
         summarize,
         config.youtube,
     )

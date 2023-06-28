@@ -247,6 +247,7 @@ def _extract_video_data(
 def export(
     video_url: str,
     target_dir: Path,
+    with_transcript: bool,
     with_summary: bool,
     config: Config,
 ):
@@ -284,7 +285,8 @@ def export(
                 f.write(f'\n[{format_duration(item.start_ts)}]\n\n')
                 f.write(f'{item.text}\n')
 
-        f.write('\n## Transcript\n')
-        for item in video.transcript.items:
-            f.write(f'\n[{format_duration(item.start_ts)}]\n')
-            f.write(f'{item.text}\n')
+        if with_transcript:
+            f.write('\n## Transcript\n')
+            for item in video.transcript.items:
+                f.write(f'\n[{format_duration(item.start_ts)}]\n')
+                f.write(f'{item.text}\n')
