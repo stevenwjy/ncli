@@ -200,14 +200,10 @@ class Entry:
         """
         Returns exported name. Note that this does NOT include any extension.
         """
-        # Notion usually replaces whitespace with "%20".
-        # Here we change it back to whitespace to make it nicer to read.
-        cleaned_name = self.name.replace("%20", " ")
-
         if self.name_suffix:
-            return cleaned_name + self.name_suffix
+            return self.name + self.name_suffix
         else:
-            return cleaned_name
+            return self.name
 
 
 class Asset:
@@ -223,11 +219,7 @@ class Asset:
         """
         Returns exported name.
         """
-        # Notion usually replaces whitespace with "%20".
-        # Here we change it back to whitespace to make it nicer to read.
-        cleaned_name = self.name.replace("%20", " ")
-
-        return cleaned_name
+        return self.name
 
 
 class Directory:
@@ -561,12 +553,7 @@ def _update_links_on_file(file_path: Path, entries_by_uid: dict[str, Entry]):
         # This prefix is usually to avoid unexpected match, e.g., making sure it starts with certain
         # patterns as documented around the regex definition.
         prefix = m.group(1)
-
         name = m.group(2)
-        name = name.replace(
-            "%20", " "
-        )  # to make it consistent with our file/dir naming
-
         uid = m.group(3)
 
         entry = entries_by_uid.get(uid)
@@ -584,19 +571,19 @@ def _update_links_on_file(file_path: Path, entries_by_uid: dict[str, Entry]):
             )
             return prefix + name
 
-        # Sanity check for name consistency
-        if name != entry.name:
+        # Sanity check for name consistency.
+        # Note that in a Markdown link we must use "%20" instead of whitespace.
+        if name != entry.name.replace(" ", "%20"):
             raise ValueError(
                 f"found inconsistent name for entry {uid} in file '{file_path}', "
                 f"expected name: '{entry.name}', found: '{name}'."
             )
+        exported_name = entry.get_exported_name().replace(" ", "%20")
 
-        return prefix + entry.get_exported_name()
+        return prefix + exported_name
 
     # Fix the link, basically for each uid find if it should be replaced to empty string or a certain name suffix.
     data = LINK_ITEM_NAME_RE.sub(replacement, data)
-    # For each image link, replace "%20" back to whitespace so that we could link properly.
-    data = ASSET_IMAGE_LINK_RE.sub(lambda m: m.group().replace("%20", " "), data)
 
     # Write the data back to the file
     with open(file_path, "w", encoding=target_enc) as file:
