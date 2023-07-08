@@ -11,17 +11,42 @@ import shutil
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass
-from typing import List, Union
+from typing import Optional
 
 import chardet
+import pandas
+import yaml
+
 from click import echo
+from pydantic import BaseModel, Field  # pylint: disable=no-name-in-module
+
+from ncli.utils import prompt_user
 
 TMP_DIR = "/tmp/ncli"
-VERSION_FILE_NAME = "version.txt"
-EXPORT_NAME_RE = re.compile(
-    r"^Export-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.zip$")
-VERSIONED_NAME_RE = re.compile(r"^(.*) ([0-9a-f]{32})(?:\.(md|csv))?$")
+INDEX_FILE_NAME = "index.yaml"
+
+UUID_36_PATTERN = r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+UUID_32_PATTERN = r"([0-9a-f]{32})"
+
+# Upon exporting all workspace content from Notion, typically it will give a download link for a zip
+# file that contains multiple parts, each in its own zip file.
+EXPORT_FULL_NAME_RE = re.compile(rf"^{UUID_36_PATTERN}_Export-{UUID_36_PATTERN}\.zip$")
+EXPORT_PART_NAME_RE = re.compile(rf"^Export-{UUID_36_PATTERN}-Part-[0-9]+\.zip$")
+
+# Name of export item, except assets (e.g., images).
+EXPORT_ITEM_NAME_RE = re.compile(rf"^(.*) {UUID_32_PATTERN}(_all)?(?:\.(md|csv))?$")
+
+DATABASE_ID_COLUMN_NAME = "ID"
+DATABASE_ID_RE = re.compile(r"^([A-Z][A-Z0-9\-]*-)?[0-9]+$")
+
+# Basically, a link item must either start with "[...](" or " (", which signifies the beginning of a markdown link,
+# or "/", which signifies a separation with the previous directory.
+#
+# The name should not contain any several types of char (e.g., slash, newline, null).
+# And the name should be followed by information about the uid of the entry according to Notion's naming convention.
+LINK_ITEM_NAME_RE = re.compile(r"(\[.+\]\(| \(|\/)([^/\n\0]+)%20([0-9a-f]{32})")
+
+ASSET_IMAGE_LINK_RE = re.compile(r"\!\[[^\n\0]+\]\([^\n\0]+\)")
 
 
 def export(
@@ -40,249 +65,634 @@ def export(
     Returns:
         None, raises exceptions in case of errors.
     """
-    extracted_dir = _validate_source(source)
-    entry = _build_entry(extracted_dir)
+    root_dir = Directory()
+    export_uid, export_dir, exported_data_dir = _validate_source(source)
+    _build_directory_info(root_dir, exported_data_dir)
+
+    # Create mapping of entries by their uid. This is to help with linking later.
+    # This will also set up name_suffix on each entry if needed (for name dedup in the same directory).
+    entries_by_uid: dict[str, Entry] = {}
+    _build_entries_map_by_uid(entries_by_uid, root_dir)
 
     if target.exists():
-        if not force:
-            raise ValueError(f"Target path '{target}' already exists")
+        if not force and not prompt_user(
+            "Target path '{target}' already exists. Delete current data?"
+        ):
+            echo("Cancelling export since target path already exists.")
+            return
 
-        echo(
-            f"Target path '{target}' already exists. Removing it since force option is used")
+        echo(f"Removing '{target}' ...")
         if target.is_dir():
             shutil.rmtree(target)
         else:
             os.remove(target)
 
-    echo(f"Creating target directory: {target}")
+    echo(f"Exporting data to '{target}' ...")
     os.makedirs(target, exist_ok=True)
+    _build_target_directory(target, export_uid, root_dir, entries_by_uid)
 
-    echo("Building target directory")
-    _build_target(target, entry)
-
-    shutil.rmtree(extracted_dir)
+    # Clean up the tmp directory
+    shutil.rmtree(export_dir)
 
     echo("Export operation has been executed successfully")
 
 
-def _validate_source(path: Path) -> Path:
+def _validate_source(path: Path) -> tuple[str, Path, Path]:
     """
     Validates the source zip file and extracts it to a temporary directory.
 
-    Args:
-        path (Path): The path to the source zip file.
-
     Returns:
-        Path: the path to the extracted directory or an error. Raises exceptions in case of errors.
+      - Unique id for the export.
+      - Path to the entire tmp directory (for further clean up)
+      - Path to the exported notion data (after extracting all zip parts)
     """
     if not path.exists():
         raise ValueError("Source path does not exist")
-
-    file_name = path.name
-    match = EXPORT_NAME_RE.match(file_name)
-
-    if not match:
+    if not EXPORT_FULL_NAME_RE.match(path.name):
         raise ValueError("Invalid export file name")
 
+    # Prepare the export directory
     date_string = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    export_dest = Path(TMP_DIR).joinpath(f"notion-export-{date_string}")
-
-    if export_dest.exists():
-        if export_dest.is_dir():
-            echo(f"Removing dir '{export_dest}' to avoid conflict")
-            shutil.rmtree(export_dest)
+    export_dir = Path(TMP_DIR).joinpath(f"notion-export-{date_string}")
+    if export_dir.exists():
+        if export_dir.is_dir():
+            echo(f"Removing dir '{export_dir}' to avoid conflict")
+            shutil.rmtree(export_dir)
         else:
-            echo(f"Removing file '{export_dest}' to avoid conflict")
-            os.remove(export_dest)
-
-    os.makedirs(export_dest, exist_ok=True)
+            echo(f"Removing file '{export_dir}' to avoid conflict")
+            os.remove(export_dir)
+    os.makedirs(export_dir, exist_ok=True)
 
     with zipfile.ZipFile(path, "r") as zip_ref:
-        zip_ref.extractall(export_dest)
+        zip_ref.extractall(export_dir)
 
-    exported_dir = file_name[:-4]  # remove '.zip'
-    exported_dir = export_dest.joinpath(exported_dir)
+    part_zip_files: list[Path] = []
+    for part_zip_file in export_dir.iterdir():
+        if not part_zip_file.is_file() or not part_zip_file.name.endswith(".zip"):
+            raise ValueError(f"found unexpected non-zip file: {part_zip_file}")
+        part_zip_files.append(part_zip_file)
+    if len(part_zip_files) == 0:
+        raise ValueError("unable to find any export part zip file")
 
-    if not exported_dir.exists():
-        raise ValueError(
-            f"Unexpected: exported dir {exported_dir} does not exist")
+    export_uid = None
+    for path in part_zip_files:
+        match = EXPORT_PART_NAME_RE.match(path.name)
+        if not match:
+            raise ValueError(f"part zip file does not match name format: {path}")
+
+        echo(f"Extracting: {path.name}")
+
+        # Sanity check for consistency.
+        uid = match.group(1)
+        if export_uid is not None and export_uid != uid:
+            raise ValueError(
+                f"inconsistent export uid. prev: {export_uid}. cur: {uid}."
+            )
+        export_uid = uid
+
+        with zipfile.ZipFile(path, "r") as zip_ref:
+            zip_ref.extractall(export_dir)
+
+    exported_data_dir = export_dir.joinpath(f"Export-{export_uid}")
+    if not exported_data_dir.exists():
+        raise ValueError(f"Unexpected: exported dir {exported_data_dir} does not exist")
 
     # Rename to follow semantic with other files
-    export_version = match.group(1).replace("-", "")
-    expected_export_dir = export_dest.joinpath(f"Export {export_version}")
-    os.rename(exported_dir, expected_export_dir)
+    export_uid = export_uid.replace("-", "")
+    expected_export_data_dir = export_dir.joinpath(
+        f"Export {export_uid.replace('-', '')}"
+    )
+    os.rename(exported_data_dir, expected_export_data_dir)
 
-    return expected_export_dir
+    return export_uid, export_dir, expected_export_data_dir
 
 
-@dataclass
 class Entry:
     """
     A class representing an entry in the export directory structure.
 
-    Attributes:
-        name (str): The name of the entry.
-        path (Path): The path to the entry in the file system.
-        kind (Union["Dir", "Page", "Asset"]): The type of the entry (e.g., Dir, Page, or Asset).
+    NOTE: This is an abstract class.
     """
+
+    uid: str
+    name: str
+    path: Path
+
+    # Extra suffix to the name in case there are multiple entries with the same name in a single directory.
+    # For example, we may add suffix like " (2)", " (3)", etc.
+    #
+    # This is typically only used if there are multiple pages or databases with the same name in a single directory.
+    # The suffix is currently determined by the lexicographical order of uids, which is not timestamp-ordered.
+    #
+    # It is recommended to not have any duplicate entry names within the same directory, except for database
+    # pages that have ID column (since the file name will be prefixed with their unique ID).
+    name_suffix: Optional[str]
+
+    def __init__(self, uid: str, name: str, path: Path, name_suffix=None):
+        self.uid = uid
+
+        self.name = name
+        self.name_suffix = name_suffix
+
+        self.path = path
+
+    def get_exported_name(self) -> str:
+        """
+        Returns exported name. Note that this does NOT include any extension.
+        """
+        # Notion usually replaces whitespace with "%20".
+        # Here we change it back to whitespace to make it nicer to read.
+        cleaned_name = self.name.replace("%20", " ")
+
+        if self.name_suffix:
+            return cleaned_name + self.name_suffix
+        else:
+            return cleaned_name
+
+
+class Asset:
+    """
+    An asset file.
+    """
+
+    def __init__(self, name: str, path: Path):
+        self.name = name
+        self.path = path
+
+    def get_exported_name(self) -> str:
+        """
+        Returns exported name.
+        """
+        # Notion usually replaces whitespace with "%20".
+        # Here we change it back to whitespace to make it nicer to read.
+        cleaned_name = self.name.replace("%20", " ")
+
+        return cleaned_name
+
+
+class Directory:
+    """
+    A directory entry containing a version and a list of child entries.
+    """
+
+    def __init__(self):
+        self._entries_by_uid: dict[str, Entry] = {}
+        self.assets: list[Asset] = []
+
+    def add_entry(self, entry: Entry):
+        self._entries_by_uid[entry.uid] = entry
+
+    def get_entry_by_uid(self, uid: str) -> Optional[Entry]:
+        return self._entries_by_uid.get(uid)
+
+    def sorted_entry_uids(self):
+        return sorted(list(self._entries_by_uid.keys()))
+
+    def add_asset(self, asset: Asset):
+        self.assets.append(asset)
+
+
+class Page(Entry):
+    """
+    A page entry.
+    """
+
+    subdir: Optional[Directory]
+
+    def __init__(
+        self, uid: str, name: str, path: Path, subdir: Optional[Directory] = None
+    ):
+        super().__init__(uid, name, path)
+        self.subdir = subdir
+
+
+class DatabaseView(Entry):
+    """
+    An entry representing a database view (CSV).
+    """
+
+    subdir: Optional[Directory]
+
+    # Special property that indicates whether this is the full view of the database (without filter and sort).
+    is_all: bool
+
+    # The following fields related to id is only valid if `is_all` is True.
+    #
+    # `has_id_column` indicates whether the database has a unique id column.
+    # If `has_id_column`` is true, `id_prefix` indicates whether the id has a certain prefix.
+    #
+    # If the ID looks like "XYZ-123" in Notion, the value of `id_prefix` will be "XYZ-"
+    # (note that there is a dash suffix).
+    has_id_column: bool
+    id_prefix: Optional[str]
 
     def __init__(
         self,
+        uid: str,
         name: str,
         path: Path,
-        kind: Union["Dir", "Page", "Asset"],
-    ) -> None:
-        self.name = name
-        self.path = path
-        self.kind = kind
+        is_all: bool = False,
+        has_id_column: bool = False,
+        id_prefix: Optional[str] = None,
+        subdir: Optional[Directory] = None,
+    ):
+        super().__init__(uid, name, path)
+        self.subdir = subdir
+        self.is_all = is_all
+        self.has_id_column = has_id_column
+        self.id_prefix = id_prefix
 
 
-@dataclass
-class Dir:
+class DatabasePage(Entry):
     """
-    A directory entry containing a version and a list of child entries.
-
-    Attributes:
-        version (str): The version string of the directory.
-        children (List[Entry]): A list of child entries in the directory.
-    """
-
-    def __init__(self, version: str, children: List[Entry]) -> None:
-        self.version = version
-        self.children = children
-
-
-@dataclass
-class Page:
-    """
-    A page entry containing a version and an extension.
-
-    Attributes:
-        version (str): The version string of the page.
-        extension (str): The file extension of the page (e.g., 'md', 'csv').
+    A database page entry.
     """
 
-    def __init__(self, version: str, extension: str) -> None:
-        self.version = version
-        self.extension = extension
+    subdir: Optional[Directory]
+
+    db_id: Optional[str]
+
+    def __init__(
+        self,
+        uid: str,
+        name: str,
+        path: Path,
+        db_id: Optional[str] = None,
+        subdir: Optional[Directory] = None,
+    ):
+        super().__init__(uid, name, path)
+        self.db_id = db_id
+        self.subdir = subdir
+
+    # Override. Note that this does NOT include any file extension.
+    def get_exported_name(self):
+        if self.db_id:
+            return f"{self.db_id}: {super().get_exported_name()}"
+        else:
+            return super().get_exported_name()
 
 
-@dataclass
-class Asset:
-    """
-    An asset entry representing non-versioned files.
-    """
-
-
-def _build_entry(path: Path) -> Entry:
-    """
-    Builds an Entry object from the given path.
-
-    Args:
-        path (Path): The path to the entry in the file system.
-
-    Returns:
-        Entry: The Entry object. Raises exceptions in case of errors.
-    """
-    file_name = path.name
-
-    match = VERSIONED_NAME_RE.match(file_name)
-    if match:
-        name = match.group(1)
-        version = match.group(2)
-
-        if path.is_dir():
-            children = [_build_entry(child) for child in path.iterdir()]
-            return Entry(
-                name=name,
-                path=path,
-                kind=Dir(version=version, children=children),
-            )
-
-        extension = match.group(3)
-        return Entry(
-            name=name,
-            path=path,
-            kind=Page(version=version, extension=extension),
+def _build_directory_info(
+    directory: Directory, path: Path, parent_database: Optional[DatabaseView] = None
+):
+    if not path.is_dir():
+        raise ValueError(
+            "unexpected: _build_directory_info is called with non-directory path"
         )
 
-    return Entry(
-        name=file_name,
-        path=path,
-        kind=Asset(),
-    )
+    # Tuple of uid, name, and path to a directory.
+    subdirs: list[tuple[str, str, Path]] = []
+
+    for child in path.iterdir():
+        match = EXPORT_ITEM_NAME_RE.match(child.name)
+
+        if not match:
+            directory.add_asset(Asset(name=child.name, path=child))
+            continue
+
+        name = match.group(1)
+        uid = match.group(2)
+        is_all = match.group(3)
+        extension = match.group(4)
+
+        if not extension:
+            subdirs.append((uid, name, child))
+            continue
+
+        if extension == "md":
+            if not parent_database or not parent_database.has_id_column:
+                if not parent_database:
+                    directory.add_entry(Page(uid=uid, name=name, path=child))
+                else:
+                    directory.add_entry(DatabasePage(uid=uid, name=name, path=child))
+            else:
+                # If the parent database has an id column, we need to check what ID this file correlates to.
+                # Because there's no uid on the CSV file and there may be multiple rows that have the same
+                # title (name).
+
+                db_page_id = _find_database_id_from_md(child, parent_database.id_prefix)
+                if db_page_id is None:
+                    raise ValueError(
+                        f"Unable to find db id with prefix '{parent_database.id_prefix}' on file '{child}'."
+                    )
+
+                directory.add_entry(
+                    DatabasePage(
+                        uid=uid,
+                        name=name,
+                        path=child,
+                        db_id=db_page_id,
+                    )
+                )
+
+        elif extension == "csv":
+            existing_entry = directory.get_entry_by_uid(uid)
+
+            # Somehow Notion can produce two CSV files on the database location.
+            # If that's the case, prefer the one with `_all.csv` suffix.
+            if existing_entry is None or is_all:
+                if not is_all:
+                    directory.add_entry(DatabaseView(uid=uid, name=name, path=child))
+                else:
+                    has_id_column, id_prefix = _find_database_id_info_from_csv(child)
+                    directory.add_entry(
+                        DatabaseView(
+                            uid=uid,
+                            name=name,
+                            path=child,
+                            is_all=True,
+                            has_id_column=has_id_column,
+                            id_prefix=id_prefix,
+                        )
+                    )
+        else:
+            raise ValueError(f"unexpected file extension: {extension}")
+
+    for uid, name, path in subdirs:
+        entry = directory.get_entry_by_uid(uid)
+        if entry is None:
+            raise ValueError(f"unable to find entry for directory with path: {path}")
+        if name != entry.name:
+            raise ValueError(
+                f"Directory '{path}' name '{name}' does not match entry name '{entry.name}'."
+            )
+
+        subdir = Directory()
+        if isinstance(entry, DatabaseView):
+            _build_directory_info(subdir, path, parent_database=entry)
+        else:
+            _build_directory_info(subdir, path)
+
+        entry.subdir = subdir
+
+
+def _find_database_id_info_from_csv(path: Path) -> tuple[bool, Optional[str]]:
+    """
+    Finds information about the ID column in the database, if any.
+
+    A valid ID column must satisfy the following properties:
+    - The column name is 'ID'. At the moment, this is not configurable.
+    - All values are non-empty.
+    - It must follow the defined regex, which is based on the rules in the Notion app.
+
+    Note that even if there's a column named 'ID', if it does not satisfy any of the other
+    properties, we will just assume it's not a valid id column. This is to handle the case
+    where someone uses such column name but is not of type 'ID' in Notion.
+    """
+    df = pandas.read_csv(path)
+
+    # Check whether there's an ID column.
+    if DATABASE_ID_COLUMN_NAME not in df.columns:
+        return (False, None)
+
+    # Check whether the values are convertible to string.
+    # If error (e.g., because the value is None), it won't be considered as a valid ID column.
+    try:
+        id_col_values = df[DATABASE_ID_COLUMN_NAME].astype(str)
+    except KeyError:
+        return (False, None)
+
+    # If the database is empty, no need for this checking.
+    if len(id_col_values) == 0:
+        return (False, None)
+
+    # Check whether all values in the ID column conforms to the pattern.
+    if not id_col_values.apply(lambda x: bool(DATABASE_ID_RE.match(str(x)))).all():
+        return (False, None)
+
+    # Use the first row to find the prefix
+    match = DATABASE_ID_RE.match(str(id_col_values[0]))
+    prefix = match.group(1)
+
+    return (True, prefix)
+
+
+def _find_database_id_from_md(path: Path, id_prefix: Optional[str]) -> Optional[str]:
+    column_prefix = f"{DATABASE_ID_COLUMN_NAME}: "
+
+    # Sharper expected prefix if there's any id_prefix
+    expected_prefix = column_prefix
+    if id_prefix:
+        expected_prefix += id_prefix
+
+    with open(path, "r", encoding="utf8") as file:
+        line_count = 0
+        for line in file:
+            line_count += 1
+
+            if line_count == 1:
+                if not line.startswith("# "):
+                    raise ValueError("markdown file does not start with heading")
+            elif line_count == 2:
+                if line.strip() != "":
+                    raise ValueError(
+                        "markdown file does not have newline after heading"
+                    )
+            else:
+                # Ignore fields with different value
+                if not line.startswith(expected_prefix):
+                    continue
+
+                # Remove the 'ID: ' prefix, and strip unnecessary whitespaces.
+                id_str = line[len(column_prefix) :].strip()
+
+                if DATABASE_ID_RE.match(id_str):
+                    return id_str
+                else:
+                    echo(f"WARN: ignored db id candidate '{id_str}'")
+
+    return None
+
+
+def _build_entries_map_by_uid(entries_map: dict[str, Entry], directory: Directory):
+    # To help deduplicate names (except for database page which will be prefixed by unique ID)
+    name_counts: dict[str, int] = {}
+
+    for uid in directory.sorted_entry_uids():
+        entry = directory.get_entry_by_uid(uid)
+        existing_entry = entries_map.get(uid)
+        if existing_entry:
+            raise ValueError(
+                f"found two entries with the same uid: '{existing_entry.path}', '{entry.path}'"
+            )
+
+        entries_map[uid] = entry
+
+        if isinstance(entry, (Page, DatabasePage, DatabaseView)):
+            if entry.subdir:
+                _build_entries_map_by_uid(entries_map, entry.subdir)
+        else:
+            raise ValueError(f"unknown entry type: {entry}")
+
+        # The db_id should have been unique.
+        if isinstance(entry, DatabasePage) and entry.db_id is not None:
+            continue
+
+        # Best effort name deduplication. Note that we iterate based on uid, which is not timestamp-ordered here.
+        # Hence it may not be stable in case there are new entries added with the same name.
+        count = name_counts.get(entry.name, 0)
+        if count > 0:
+            entry.name_suffix = f" ({count})"
+        name_counts[entry.name] = count + 1
 
 
 def _detect_file_encoding(file_path):
-    with open(file_path, 'rb') as f:
+    with open(file_path, "rb") as f:
         result = chardet.detect(f.read())
-    return result['encoding']
+    return result["encoding"]
 
 
-def _remove_versions(file_path: Path):
+def _update_links_on_file(file_path: Path, entries_by_uid: dict[str, Entry]):
     # Somehow exported files from Notion could have encodings such as 'ascii', 'Windows-1252', and 'Windows-1254'.
     # However, if we use such encoding to read the file, sometimes there could be errors.
     # Hence, we will just print some warnings here if we are about to change the encoding.
     enc = _detect_file_encoding(file_path)
-    target_enc = 'utf-8'
+    target_enc = "utf-8"
     if enc != target_enc:
-        echo(
-            f'WARN: Changing file {file_path} encofing from {enc} to {target_enc}')
+        # The warning is commented out because this can be a bit too noisy.
+        # Should probably be fine to change the encoding.
+        pass
+        # echo(f"WARN: Changing file {file_path} encofing from {enc} to {target_enc}")
 
-    with open(file_path, 'r', encoding=target_enc) as file:
+    with open(file_path, "r", encoding=target_enc) as file:
         data = file.read()
 
-    # Remove the pattern from the data
-    data = re.sub('%20[0-9a-f]{32}', '', data)
+    def replacement(m: re.Match) -> str:
+        # This prefix is usually to avoid unexpected match, e.g., making sure it starts with certain
+        # patterns as documented around the regex definition.
+        prefix = m.group(1)
+
+        name = m.group(2)
+        name = name.replace(
+            "%20", " "
+        )  # to make it consistent with our file/dir naming
+
+        uid = m.group(3)
+
+        entry = entries_by_uid.get(uid)
+        if entry is None:
+            # If the entry could not be found, just return the name back (i.e., trim the uid).
+            #
+            # This could somehow happen when a page links to a specific database view. Given that
+            # Notion typically only exports either "current view" or "default view", the linked
+            # view may not get exported.
+            #
+            # In such scenario, this link could still end up working, but it would point to the
+            # exported view instead of the view recorded in Notion.
+            echo(
+                f"WARN: found link to entry with non-existent uid {uid} in file '{file_path}'."
+            )
+            return prefix + name
+
+        # Sanity check for name consistency
+        if name != entry.name:
+            raise ValueError(
+                f"found inconsistent name for entry {uid} in file '{file_path}', "
+                f"expected name: '{entry.name}', found: '{name}'."
+            )
+
+        return prefix + entry.get_exported_name()
+
+    # Fix the link, basically for each uid find if it should be replaced to empty string or a certain name suffix.
+    data = LINK_ITEM_NAME_RE.sub(replacement, data)
+    # For each image link, replace "%20" back to whitespace so that we could link properly.
+    data = ASSET_IMAGE_LINK_RE.sub(lambda m: m.group().replace("%20", " "), data)
 
     # Write the data back to the file
-    with open(file_path, 'w', encoding=target_enc) as file:
+    with open(file_path, "w", encoding=target_enc) as file:
         file.write(data)
 
 
-def _build_target(path: Path, entry: Entry) -> None:
+def _build_target_directory(
+    path: Path,
+    uid: str,
+    directory: Directory,
+    # To help with fixing links. This contains entries across all export data,
+    # not only this directory.
+    entries_by_uid: dict[str, Entry],
+) -> None:
     """
-    Builds the target directory structure based on the given Entry.
-
-    Args:
-        path (Path): The path to the target directory.
-        entry (Entry): The root Entry object representing the directory structure.
-
-    Returns:
-        None, raises exceptions in case of errors.
+    Builds the target directory structure.
     """
-    if isinstance(entry.kind, Dir):
-        version_file = path.joinpath(VERSION_FILE_NAME)
+    index_dir = IndexDir(uid=uid)
 
-        with version_file.open("w") as f:
-            f.write(f"version: {entry.kind.version}\n\n")
-            f.write("Entries:\n")
+    # Guaranteed to be unique by the export format.
+    for asset in directory.assets:
+        exported_name = asset.get_exported_name()
 
-            for child in entry.kind.children:
-                if isinstance(child.kind, Page):
-                    file_name = f"{child.name}.{child.kind.extension}"
-                    target_path = path.joinpath(file_name)
-                    shutil.copy(child.path, target_path)
+        index_dir.assets.append(IndexItemAsset(name=exported_name))
 
-                    # Remove versions from the file content (esp. hyperlinks), so that we could navigate properly.
-                    _remove_versions(target_path)
+        # Move from the tmp dir to the target dir
+        shutil.copy(asset.path, path.joinpath(exported_name))
 
-                    f.write(
-                        f"- '[Page] {file_name}': '{child.kind.version}'\n")
+    for entry_uid in directory.sorted_entry_uids():
+        entry = directory.get_entry_by_uid(entry_uid)
+        exported_name = entry.get_exported_name()
 
-                elif isinstance(child.kind, Asset):
-                    file_name = child.name
-                    shutil.copy(child.path, path.joinpath(file_name))
+        if isinstance(entry, (Page, DatabasePage)):
+            target_path = path.joinpath(exported_name + ".md")
+            index_dir.pages.append(IndexItemPage(name=target_path.name, uid=entry.uid))
 
-                    f.write(f"- '[Asset] {file_name}'\n")
+            shutil.copy(entry.path, target_path)
+            _update_links_on_file(target_path, entries_by_uid)
 
-                elif isinstance(child.kind, Dir):
-                    child_path = path.joinpath(child.name)
-                    os.makedirs(child_path, exist_ok=True)
-                    _build_target(child_path, child)
+        elif isinstance(entry, DatabaseView):
+            target_path = path.joinpath(exported_name + ".csv")
+            index_dir.pages.append(
+                IndexItemDatabase(name=target_path.name, uid=entry.uid)
+            )
 
-                    f.write(
-                        f"- '[Dir] {child.name}': '{child.kind.version}'\n")
+            shutil.copy(entry.path, target_path)
+        else:
+            raise ValueError(f"unknown entry type: {entry}")
 
-    else:
-        raise ValueError("build_target must be called with a directory entry")
+        if entry.subdir:
+            target_path = path.joinpath(exported_name)
+            os.makedirs(target_path, exist_ok=True)
+            _build_target_directory(
+                target_path, entry.uid, entry.subdir, entries_by_uid
+            )
+
+    # Write the index file.
+    index_file = path.joinpath(INDEX_FILE_NAME)
+    index_str = yaml.dump(index_dir.dict())
+    with open(index_file, "w", encoding="utf-8") as file:
+        file.write(index_str)
+
+
+class IndexItemPage(BaseModel):
+    """
+    Index representation for a page file (Markdown).
+    """
+
+    uid: str
+    name: str
+
+
+class IndexItemDatabase(BaseModel):
+    """
+    Index representation for a database file (CSV).
+    """
+
+    uid: str
+    name: str
+
+
+class IndexItemAsset(BaseModel):
+    """
+    Index representation for an asset file.
+    """
+
+    name: str
+
+
+class IndexDir(BaseModel):
+    """
+    Index representation for a directory.
+    """
+
+    uid: str
+
+    assets: list[IndexItemAsset] = Field(default_factory=list)
+    databases: list[IndexItemDatabase] = Field(default_factory=list)
+    pages: list[IndexItemPage] = Field(default_factory=list)
