@@ -5,18 +5,24 @@
 A module for processing and managing Kindle data.
 """
 
-from typing import List
 from pathlib import Path
 
 import requests
-
 from bs4 import BeautifulSoup
 from click import echo
 
-from ncli.kit_amazon import Config, Authenticator, load_authenticator, \
-    Book, Annotation, ExportIndex, export_to_markdown
+from ncli.kit_amazon import (
+    Annotation,
+    Authenticator,
+    Book,
+    Config,
+    ExportIndex,
+    export_to_markdown,
+    load_authenticator,
+)
 
-KINDLE_HIGHLIGHTS_URL: str = 'https://read.amazon.com/notebook'
+
+KINDLE_HIGHLIGHTS_URL: str = "https://read.amazon.com/notebook"
 EXPORT_INDEX_FILE_NAME: str = "index.toml"
 
 
@@ -31,7 +37,7 @@ class Client:
 
     def __init__(self, auth: Authenticator):
         if auth.website_cookies is None:
-            raise ValueError('unexpected: auth does not have website_cookies')
+            raise ValueError("unexpected: auth does not have website_cookies")
 
         self.auth = auth
         self.session = requests.Session()
@@ -43,66 +49,87 @@ class Client:
         """
         self.session.close()
 
-    def get_books(self) -> List[Book]:
+    def get_books(self) -> list[Book]:
         """
         Fetches the list of books from the Kindle Highlights website.
 
         Returns:
             list[Book]: A list of Book instances.
         """
-        kindle_highlights_response = self.session.get(KINDLE_HIGHLIGHTS_URL)
-
-        soup = BeautifulSoup(kindle_highlights_response.content, 'html.parser')
-
-        book_entries = soup.find_all(
-            'div', {'class': 'kp-notebook-library-each-book'})
         books = []
+        page_token = ""
+        while True:
+            kindle_highlights_response = self.session.get(
+                f"{KINDLE_HIGHLIGHTS_URL}?library=list&token={page_token}"
+            )
+            soup = BeautifulSoup(kindle_highlights_response.content, "html.parser")
 
-        for book_entry in book_entries:
-            # Retrieve the Amazon Standard Identification Number (ASIN)
-            #
-            # We need this value if we want to fetch other information about the book from Amazon (e.g., highlights).
-            asin = book_entry['id']
+            book_entries = soup.find_all(
+                "div", {"class": "kp-notebook-library-each-book"}
+            )
+            page_token = soup.find(
+                "input", {"class": "kp-notebook-library-next-page-start"}
+            )
+            if page_token is not None:
+                page_token = page_token.get("value", default=None)
 
-            # Retrieve the book title and subtitle if present
-            #
-            # Note that some books have the following format for the title: "<title>: <subtitle>".
-            # Hence, we want to identify the subtitle and separate it from the main title if there is any.
-            # The reason is because we want to save a book only based on its title as the file name.
-            book_title = book_entry.find('h2').get_text(strip=True)
-            title_parts = book_title.split(":", 1)
-            title = title_parts[0].strip()
-            subtitle = title_parts[1].strip() if len(title_parts) > 1 else None
+            for book_entry in book_entries:
+                # Retrieve the Amazon Standard Identification Number (ASIN)
+                #
+                # We need this value if we want to fetch other information about the book from Amazon (e.g., highlights).
+                asin = book_entry["id"]
 
-            # Retrieve the author
-            #
-            # In the website, the author is written in the following format: "By: <author>".
-            # Hence, we need to remove the "By: " prefix.
-            book_author = book_entry.find('p').get_text(strip=True)
-            author_parts = book_author.split(":", 1)
-            author = author_parts[1].strip() if len(
-                author_parts) > 1 else author_parts[0].strip()
+                # Retrieve the book title and subtitle if present
+                #
+                # Note that some books have the following format for the title: "<title>: <subtitle>".
+                # Hence, we want to identify the subtitle and separate it from the main title if there is any.
+                # The reason is because we want to save a book only based on its title as the file name.
+                book_title = book_entry.find("h2").get_text(strip=True)
+                title_parts = book_title.split(":", 1)
+                title = title_parts[0].strip()
+                subtitle = title_parts[1].strip() if len(title_parts) > 1 else None
 
-            # Retrieve the image URL
-            #
-            # Note that the url will be using Amazon CDN and it is not guaranteed for long time use as they could
-            # change over time.
-            image_url = book_entry.find('img')['src']
+                # Retrieve the author
+                #
+                # In the website, the author is written in the following format: "By: <author>".
+                # Hence, we need to remove the "By: " prefix.
+                book_author = book_entry.find("p").get_text(strip=True)
+                author_parts = book_author.split(":", 1)
+                author = (
+                    author_parts[1].strip()
+                    if len(author_parts) > 1
+                    else author_parts[0].strip()
+                )
 
-            # Retrieve the last opened date
-            #
-            # Note that we keep it as a string, since this value is probably not that useful given that we may
-            # occasionally open a book, but not adding any new annotations.
-            last_opened_date = book_entry.find('input')['value']
+                # Retrieve the image URL
+                #
+                # Note that the url will be using Amazon CDN and it is not guaranteed for long time use as they could
+                # change over time.
+                image_url = book_entry.find("img")["src"]
 
-            # Construct the book object based on all the information that we have
-            book = Book(asin=asin, title=title, subtitle=subtitle, author=author,
-                        image_url=image_url, last_opened_date=last_opened_date)
-            books.append(book)
+                # Retrieve the last opened date
+                #
+                # Note that we keep it as a string, since this value is probably not that useful given that we may
+                # occasionally open a book, but not adding any new annotations.
+                last_opened_date = book_entry.find("input")["value"]
+
+                # Construct the book object based on all the information that we have
+                book = Book(
+                    asin=asin,
+                    title=title,
+                    subtitle=subtitle,
+                    author=author,
+                    image_url=image_url,
+                    last_opened_date=last_opened_date,
+                )
+                books.append(book)
+
+            if page_token is None or page_token == "":
+                break
 
         return books
 
-    def get_annotations(self, book: Book) -> List[Annotation]:
+    def get_annotations(self, book: Book) -> list[Annotation]:
         """
         Fetches the annotations for a given book.
         """
@@ -119,28 +146,39 @@ class Client:
 
         while first_page or page_token:
             if first_page:
-                url = f'https://read.amazon.com/notebook?asin={book_asin}&contentLimitState=&='
+                url = f"https://read.amazon.com/notebook?asin={book_asin}&contentLimitState=&="
                 first_page = False
             else:
-                url = f'https://read.amazon.com/notebook?asin={book_asin}&token={page_token}&contentLimitState={page_limit_state}&='
+                url = f"https://read.amazon.com/notebook?asin={book_asin}&token={page_token}&contentLimitState={page_limit_state}&="
 
             annotations_response = session.get(url)
 
-            soup = BeautifulSoup(annotations_response.content, 'html.parser')
+            soup = BeautifulSoup(annotations_response.content, "html.parser")
 
             # Next page token and limit state
-            page_token = soup.find(
-                'input', {'class': 'kp-notebook-annotations-next-page-start'}).get('value', default=None)
-            page_limit_state = soup.find(
-                'input', {'class': 'kp-notebook-content-limit-state'}).get('value', default=None)
+            try:
+                page_token = soup.find(
+                    "input", {"class": "kp-notebook-annotations-next-page-start"}
+                ).get("value", default=None)
+                page_limit_state = soup.find(
+                    "input", {"class": "kp-notebook-content-limit-state"}
+                ).get("value", default=None)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                echo(
+                    f"an error occurred: {e}.\n"
+                    f"fail to parse page info: {soup.body.decode_contents()}"
+                )
+                raise e
 
-            annotations_element = soup.find(id='kp-notebook-annotations')
+            annotations_element = soup.find(id="kp-notebook-annotations")
             if annotations_element:
                 annotations = annotations_element.find_all(
-                    'div', {'class': 'kp-notebook-row-separator'})
+                    "div", {"class": "kp-notebook-row-separator"}
+                )
             else:
                 annotations = soup.find_all(
-                    'div', {'class': 'kp-notebook-row-separator'})
+                    "div", {"class": "kp-notebook-row-separator"}
+                )
 
             for annotation in annotations:
                 highlight = None
@@ -149,8 +187,7 @@ class Client:
                 page = None
 
                 # Retrieve the highlight
-                highlight_element = annotation.find(
-                    'span', {'id': 'highlight'})
+                highlight_element = annotation.find("span", {"id": "highlight"})
                 if highlight_element:
                     highlight = highlight_element.get_text(strip=True)
 
@@ -163,7 +200,8 @@ class Client:
                     # However, since we can always get the location from another field, we won't retrieve the location
                     # for the second case.
                     highlight_header = annotation.find(
-                        'span', {'id': 'annotationHighlightHeader'}).get_text(strip=True)
+                        "span", {"id": "annotationHighlightHeader"}
+                    ).get_text(strip=True)
                     header_parts = highlight_header.split("|", 1)
                     color_parts = header_parts[0].strip().split(" ", 1)
                     page_parts = header_parts[1].strip().split(":\xa0", 1)
@@ -177,8 +215,7 @@ class Client:
                 #
                 # Note that the Kindle notebook page is a bit weird since it will always have the note element.
                 # In order to find out about its existence, we need to check the length.
-                note_str = annotation.find(
-                    'span', {'id': 'note'}).get_text(strip=True)
+                note_str = annotation.find("span", {"id": "note"}).get_text(strip=True)
                 if note_str:
                     note = note_str
 
@@ -190,7 +227,8 @@ class Client:
                         #
                         # Only the first case is useful.
                         note_header = annotation.find(
-                            'span', {'id': 'annotationNoteHeader'}).get_text(strip=True)
+                            "span", {"id": "annotationNoteHeader"}
+                        ).get_text(strip=True)
                         header_parts = note_header.split("|", 1)
                         page_parts = header_parts[1].strip().split(":\xa0", 1)
 
@@ -198,16 +236,19 @@ class Client:
                             page = int(page_parts[1].strip())
 
                 # Retrieve the location
-                location = int(annotation.find(
-                    'input', {'id': 'kp-annotation-location'})['value'])
+                location = int(
+                    annotation.find("input", {"id": "kp-annotation-location"})["value"]
+                )
 
-                result.append(Annotation(
-                    highlight=highlight,
-                    highlight_color=highlight_color,
-                    note=note,
-                    page=page,
-                    location=location
-                ))
+                result.append(
+                    Annotation(
+                        highlight=highlight,
+                        highlight_color=highlight_color,
+                        note=note,
+                        page=page,
+                        location=location,
+                    )
+                )
 
         return result
 
@@ -231,15 +272,15 @@ def export(
         if export_index.check_book(book, skip_check=renew):
             annotations = client.get_annotations(book)
 
-            # Note that we will generate the book name using its title and use the ".md" extension since it is
-            # a Markdown file.
+            # Note that we will generate the book name using its title and use
+            # the ".md" extension since it is a Markdown file.
             book_path = target.joinpath(f"{book.title}.md")
 
             export_to_markdown(book_path, book, annotations=annotations)
 
             # Print some info if all books are expected to be exported.
             if renew:
-                echo(f'Exported book: {book}')
+                echo(f"Exported book: {book}")
 
     # Log warning(s) for book(s) that are left unchecked.
     if not renew:

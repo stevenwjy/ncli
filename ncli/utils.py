@@ -5,8 +5,8 @@ The `utils` module contains a collection of utility functions that can be used a
 
 from datetime import datetime, timedelta
 
-from click import echo
 import toml
+from click import echo
 
 
 def format_duration(duration: float) -> str:

@@ -1,7 +1,0 @@
-[FORMAT]
-good-names=e,x,y,z,i,j,m,n,f,r,df
-max-line-length=160
-max-locals=30
-
-[MESSAGES CONTROL]
-disable=too-few-public-methods

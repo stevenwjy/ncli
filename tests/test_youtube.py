@@ -15,5 +15,6 @@ class TestYoutube(unittest.TestCase):
         self.assertEqual(_extract_video_id(url3), video_id)
         self.assertEqual(_extract_video_id(url4), video_id)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

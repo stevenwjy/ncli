@@ -6,11 +6,9 @@ A module for processing and managing Amazon data.
 """
 from __future__ import annotations
 
-import io
 import getpass
+import io
 import os.path
-
-from typing import List, Optional, Union
 from datetime import datetime
 from pathlib import Path
 
@@ -18,19 +16,29 @@ import click
 import httpx
 import requests
 import toml
-from PIL import Image
-from pydantic import BaseModel, Field  # pylint: disable=no-name-in-module
-from click import echo, secho, prompt
-
 from audible import Authenticator
 from audible.auth import detect_file_encryption
 from audible.login import default_login_url_callback
+from click import echo, prompt, secho
+from PIL import Image
+from pydantic import BaseModel, ConfigDict, Field
 
 from ncli import constants
-from ncli.utils import prompt_user, format_duration_from_ms, toml_dumps_with_newline
+from ncli.utils import format_duration_from_ms, prompt_user, toml_dumps_with_newline
 
-AVAILABLE_COUNTRY_CODES: List[str] = [
-    "us", "ca", "uk", "au", "fr", "de", "es", "jp", "it", "in"]
+
+AVAILABLE_COUNTRY_CODES: list[str] = [
+    "us",
+    "ca",
+    "uk",
+    "au",
+    "fr",
+    "de",
+    "es",
+    "jp",
+    "it",
+    "in",
+]
 DEFAULT_AUTH_FILE_EXTENSION: str = "json"
 DEFAULT_AUTH_FILE_ENCRYPTION: str = "json"
 
@@ -39,8 +47,9 @@ class Config(BaseModel):
     """
     Config for Amazon products.
     """
-    auth_file: str = ''
-    country_code: str = 'us'
+
+    auth_file: str = ""
+    country_code: str = "us"
 
 
 def load_authenticator(config: Config) -> Authenticator:
@@ -51,114 +60,116 @@ def load_authenticator(config: Config) -> Authenticator:
         file_path = constants.BASE_PATH.joinpath(config.auth_file)
         pwd = None
         if detect_file_encryption(file_path):
-            pwd = getpass.getpass('Enter auth file password: ')
+            pwd = getpass.getpass("Enter auth file password: ")
 
         try:
             return Authenticator.from_file(file_path, pwd)
         except ValueError as e:
             if pwd:
                 raise ValueError(
-                    f'Failed to decrypt the auth file. Wrong password? Error: {e}') from e
+                    f"Failed to decrypt the auth file. Wrong password? Error: {e}"
+                ) from e
             raise e
 
-    raise ValueError('Config without auth file not supported')
+    raise ValueError("Config without auth file not supported")
 
 
 class Book(BaseModel):
     """
     Represents a book with metadata.
     """
-    asin: str = ''
-    title: str = ''
-    subtitle: Optional[str] = None
+
+    asin: str = ""
+    title: str = ""
+    subtitle: str | None = None
 
     # Author of the book.
     #
     # For a book that has more than one authors, we concatenate their names (comma-separated) into
     # a single string here for simplicity.
-    author: str = ''
+    author: str = ""
 
     # URL for the book cover image
-    image_url: str = ''
+    image_url: str = ""
     # URL for the accompanying PDF (only for Audible).
     # Note that the URL may require some cookies to be accessed.
-    pdf_url: Optional[str] = None
+    pdf_url: str | None = None
 
     # Publication date for the book. Currently only available for Audible.
-    publication_date: Optional[str] = None
+    publication_date: str | None = None
     # Purchase date for the book. Currently only available for Audible.
-    purchase_date: Optional[str] = None
+    purchase_date: str | None = None
 
     # Last opened date represents:
     # - Last time the book is read for Kindle.
     # - Last time the book is listened for Audible (based on last update time for the last listened position).
-    last_opened_date: str = ''
+    last_opened_date: str = ""
 
 
 class Chapter(BaseModel):
     """
     Represents a chapter from a book.
     """
-    title: str = ''
+
+    title: str = ""
 
     # For Audible
     #
     # The clip start and end values are in milisecond offset w.r.t. the beginning time.
-    start_ms: Optional[int] = None
-    end_ms: Optional[int] = None
+    start_ms: int | None = None
+    end_ms: int | None = None
 
-    subchapters: Optional[List[Chapter]] = None
+    subchapters: list[Chapter] | None = None
 
 
 class Annotation(BaseModel):
     """
     Represents a single annotation (highlight and/or note) from a book.
     """
+
     # For Kindle
-    highlight: Optional[str] = None
-    highlight_color: Optional[str] = None
+    highlight: str | None = None
+    highlight_color: str | None = None
 
     # For Kindle and Audible
-    note: Optional[str] = None
+    note: str | None = None
 
     # For Kindle
     #
     # Note that location is guaranteed to exist for Kindle.
-    location: Optional[int] = None
-    page: Optional[int] = None
+    location: int | None = None
+    page: int | None = None
 
     # For Audible
     #
     # The clip start and end values are in milisecond offset w.r.t. the beginning time.
-    clip_start_ms: Optional[int] = None
-    clip_end_ms: Optional[int] = None
+    clip_start_ms: int | None = None
+    clip_end_ms: int | None = None
 
     # Currently only available for Audible
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class ExportItem(BaseModel):
     """
     Represents an item to be exported, containing a Book and its associated metadata.
     """
+
     last_updated_time: str
     info: Book
 
     checked: bool = Field(default=False, exclude=True)
 
-    class Config:  # pylint: disable=too-few-public-methods
-        """
-        Config for the pydantic dataclass
-        """
-        fields = {'checked': {'exclude': True}}
+    model_config = ConfigDict(json_schema_extra={"exclude": ["checked"]})
 
 
 class ExportIndex(BaseModel):
     """
     Represents an index of exported items.
     """
-    books: List[ExportItem]
+
+    books: list[ExportItem]
 
     @staticmethod
     def load_or_default(path: Path):
@@ -168,7 +179,7 @@ class ExportIndex(BaseModel):
         if not os.path.exists(path):
             return ExportIndex(books=[])
 
-        with open(path, "r", encoding='utf-8') as file:
+        with open(path, encoding="utf-8") as file:
             index_str = file.read()
         index = toml.loads(index_str)
         return ExportIndex(**index)
@@ -178,7 +189,7 @@ class ExportIndex(BaseModel):
         Save the export index into the specified path.
         """
         index_str = toml_dumps_with_newline(self.dict())
-        with open(path, "w", encoding='utf-8') as file:
+        with open(path, "w", encoding="utf-8") as file:
             file.write(index_str)
 
     def check_book(self, book: Book, skip_check: bool = False) -> bool:
@@ -198,7 +209,9 @@ class ExportIndex(BaseModel):
         """
 
         # Generate the current time in case we want to update the index
-        current_datetime = datetime.now().astimezone().strftime("%a, %d %b %Y %H:%M:%S %z")
+        current_datetime = (
+            datetime.now().astimezone().strftime("%a, %d %b %Y %H:%M:%S %z")
+        )
 
         # WARN: This could be problematic if someone tampers with the index file manually and adds a book
         #       with a duplicate ASIN. However, we ignore it now since it is not an expected behavior.
@@ -233,7 +246,9 @@ class ExportIndex(BaseModel):
             # Ask the user first whether they want to fetch the updated annotations
 
             # If yes, then we will automatically update the index to reflect the latest metadata
-            if skip_check or prompt_user("Do you want to fetch the latest data for this book?"):
+            if skip_check or prompt_user(
+                "Do you want to fetch the latest data for this book?"
+            ):
                 indexed_book.info = book
                 indexed_book.last_updated_time = current_datetime
                 return True
@@ -284,9 +299,9 @@ class ExportIndex(BaseModel):
 def export_to_markdown(
     output_file: str,
     book: Book,
-    chapters: Optional[List[Chapter]] = None,
-    annotations: Optional[List[Annotation]] = None,
-    annotations_version: Optional[str] = None,
+    chapters: list[Chapter] | None = None,
+    annotations: list[Annotation] | None = None,
+    annotations_version: str | None = None,
 ) -> None:
     """
     Exports the given book and annotation data to a Markdown file.
@@ -296,33 +311,33 @@ def export_to_markdown(
         book (Book): The Book object to be exported.
         annotation_list (AnnotationList): The list of annotations associated with the book.
     """
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(f'# {book.title}\n\n')
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(f"# {book.title}\n\n")
 
         # Write information about the book
 
         if book.subtitle:
-            f.write(f'- Subtitle: {book.subtitle}\n')
+            f.write(f"- Subtitle: {book.subtitle}\n")
         f.write(f"- Author(s): {book.author}\n")
         if book.image_url:
-            f.write(f'- Image URL: {book.image_url}\n')
+            f.write(f"- Image URL: {book.image_url}\n")
         if book.pdf_url:
             # Note that accessing the URL typically requires special params. Hence, it's already expected
             # to be downloaded separately.
-            f.write(f'- PDF URL: {book.pdf_url}\n')
+            f.write(f"- PDF URL: {book.pdf_url}\n")
         if book.publication_date:
-            f.write(f'- Publication date: {book.publication_date}\n')
+            f.write(f"- Publication date: {book.publication_date}\n")
         if book.purchase_date:
-            f.write(f'- Purchase date: {book.purchase_date}\n')
+            f.write(f"- Purchase date: {book.purchase_date}\n")
         f.write(f"- Last opened date: {book.last_opened_date}\n")
         f.write(f"- ASIN: {book.asin}\n")
-        f.write('\n')
+        f.write("\n")
 
         # Write chapters
         if chapters:
-            f.write('## Contents\n\n')
+            f.write("## Contents\n\n")
 
-            def write_chapters(chapters: List[Chapter], depth: int):
+            def write_chapters(chapters: list[Chapter], depth: int):
                 for chapter in chapters:
                     f.write(f"{'  ' * depth}")
                     f.write(f"- {chapter.title}")
@@ -330,53 +345,57 @@ def export_to_markdown(
                     if chapter.start_ms:
                         start_time = format_duration_from_ms(chapter.start_ms)
                         end_time = format_duration_from_ms(chapter.end_ms)
-                        f.write(f' [{start_time}, {end_time}]')
+                        f.write(f" [{start_time}, {end_time}]")
 
-                    f.write('\n')
+                    f.write("\n")
                     if chapter.subchapters:
-                        write_chapters(chapter.subchapters, depth+1)
+                        write_chapters(chapter.subchapters, depth + 1)
 
             write_chapters(chapters, 0)
-            f.write('\n')
+            f.write("\n")
 
         # Write annotations
         if annotations:
-            f.write('## Annotations\n\n')
+            f.write("## Annotations\n\n")
             if annotations_version:
-                f.write(f'Version: {annotations_version}\n')
-            f.write('\n---\n\n')
+                f.write(f"Version: {annotations_version}\n")
+            f.write("\n---\n\n")
             for annotation in annotations:
                 # Metadata
                 if annotation.created_at:
-                    f.write(f'- Created: {annotation.created_at}')
-                    if annotation.updated_at and annotation.updated_at != annotation.created_at:
-                        f.write(f' | Updated: {annotation.updated_at}')
-                    f.write('\n')
+                    f.write(f"- Created: {annotation.created_at}")
+                    if (
+                        annotation.updated_at
+                        and annotation.updated_at != annotation.created_at
+                    ):
+                        f.write(f" | Updated: {annotation.updated_at}")
+                    f.write("\n")
                 if annotation.clip_start_ms:
                     # Note that this is only for Audible
-                    start_time = format_duration_from_ms(
-                        annotation.clip_start_ms)
+                    start_time = format_duration_from_ms(annotation.clip_start_ms)
                     end_time = format_duration_from_ms(annotation.clip_end_ms)
-                    f.write(f'- Clip: [{start_time}, {end_time}]\n')
+                    f.write(f"- Clip: [{start_time}, {end_time}]\n")
                 if annotation.location:
                     # Note that this is only for Kindle
-                    f.write('- ')
+                    f.write("- ")
                     if annotation.page:
-                        f.write(f'Page: {annotation.page} | ')
-                    f.write(f'Location: {annotation.location} [(kindle link)]'
-                            f'(kindle://book?action=open&asin={book.asin}&location={annotation.location})\n')
+                        f.write(f"Page: {annotation.page} | ")
+                    f.write(
+                        f"Location: {annotation.location} [(kindle link)]"
+                        f"(kindle://book?action=open&asin={book.asin}&location={annotation.location})\n"
+                    )
 
                 # Main content
-                f.write('\n')
+                f.write("\n")
                 if annotation.highlight:
                     f.write(f"**{annotation.highlight_color} highlight:**\n")
                     f.write(f"> {annotation.highlight}\n")
-                    f.write('\n')
+                    f.write("\n")
                 if annotation.note:
                     f.write("**Note:**\n")
                     f.write(f"{annotation.note}\n")
 
-                f.write('\n---\n\n')
+                f.write("\n---\n\n")
 
 
 # ---
@@ -399,10 +418,7 @@ def prompt_captcha_callback(captcha_url: str) -> str:
         img = Image.open(f)
         img.show()
     else:
-        echo(
-            "Please open the following url with a web browser "
-            "to get the captcha:"
-        )
+        echo("Please open the following url with a web browser " "to get the captcha:")
         echo(captcha_url)
 
     guess = prompt("Answer for CAPTCHA")
@@ -429,13 +445,13 @@ def prompt_external_callback(url: str) -> str:
 
 
 def build_auth_file(
-    filename: Union[str, Path],
-    username: Optional[str],
-    password: Optional[str],
+    filename: str | Path,
+    username: str | None,
+    password: str | None,
     country_code: str,
-    file_password: Optional[str] = None,
+    file_password: str | None = None,
     external_login: bool = False,
-    with_username: bool = False
+    with_username: bool = False,
 ) -> None:
     echo()
     secho("Login with amazon to your audible account now.", bold=True)
@@ -443,26 +459,27 @@ def build_auth_file(
     file_options = {"filename": Path(filename)}
     if file_password:
         file_options.update(
-            password=file_password,
-            encryption=DEFAULT_AUTH_FILE_ENCRYPTION
+            password=file_password, encryption=DEFAULT_AUTH_FILE_ENCRYPTION
         )
 
     if external_login:
         auth = Authenticator.from_login_external(
             locale=country_code,
             with_username=with_username,
-            login_url_callback=prompt_external_callback)
+            login_url_callback=prompt_external_callback,
+        )
     else:
         auth = Authenticator.from_login(
             username=username,
             password=password,
             locale=country_code,
             captcha_callback=prompt_captcha_callback,
-            otp_callback=prompt_otp_callback)
+            otp_callback=prompt_otp_callback,
+        )
 
     echo()
 
-    device_name = auth.device_info["device_name"]  # pylint: disable=unsubscriptable-object
+    device_name = auth.device_info["device_name"]
     secho(f"Successfully registered {device_name}.", bold=True)
 
     if not filename.parent.exists():
@@ -475,6 +492,7 @@ def build_auth_file(
 # Downloader
 # ---
 
+
 class Downloader:
     """
     This code is based on the implementation found at:
@@ -486,10 +504,10 @@ class Downloader:
     def __init__(
         self,
         url: str,
-        file: Union[Path, str],
+        file: Path | str,
         client: requests.Session,
         overwrite_existing: bool,
-        content_type: Optional[Union[List[str], str]] = None
+        content_type: list[str] | str | None = None,
     ) -> None:
         self._url = url
         self._file = Path(file).resolve()
@@ -498,8 +516,8 @@ class Downloader:
         self._overwrite_existing = overwrite_existing
 
         if isinstance(content_type, str):
-            content_type = [content_type, ]
-        self._expected_content_type = content_type
+            content_type = [content_type]
+        self._expected_content_types = content_type
 
     def _file_okay(self):
         if not self._file.parent.is_dir():
@@ -535,15 +553,15 @@ class Downloader:
                 )
                 return False
 
-        if self._expected_content_type is not None:
-            if content_type not in self._expected_content_type:
+        if self._expected_content_types is not None:
+            if content_type not in self._expected_content_types:
                 try:
                     msg = self._tmp_file.read_text()
                 except:  # pylint: disable=bare-except
                     msg = "Unknown"
                 echo(
                     f"Error downloading {self._file}. Wrong content type. "
-                    f"Expected type(s): {self._expected_content_type}; "
+                    f"Expected type(s): {self._expected_content_types}; "
                     f"Got: {content_type}; Message: {msg}"
                 )
                 return False

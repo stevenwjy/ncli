@@ -26,8 +26,8 @@ git clone https://github.com/stevenwjy/ncli.git
 cd ncli
 ```
 
-We suggest using [poetry](https://python-poetry.org/) for managing this project. If you don't have it yet, install it
-using the command below:
+It is recommended to use [poetry](https://python-poetry.org/) for managing this project. If you don't have it yet,
+install it with the following command:
 
 ```bash
 curl -sSL https://install.python-poetry.org | python3 -
@@ -83,14 +83,9 @@ because we use the [audible](https://github.com/mkb79/Audible) package for authe
 
 ### Audible
 
-ncli allows you to export the following data for books in your Audible library:
+**Export notes**
 
-- List of chapters
-- Clips
-- Notes
-- Accompanying PDF
-
-Execute the following command to do so:
+Included information: list of chapters, clips, notes, and accompanying PDF.
 
 ```
 ncli audible export --target <path>
@@ -105,6 +100,9 @@ To set a standard path for your Audible exports and avoid having to put it in ev
 
 ```
 ncli config set audible_export_dir <path>
+
+# Afterward, you can simply use:
+ncli audible export
 ```
 
 Your data will be organized in a markdown file, except for the accompanying PDF (if any), which will be saved as a
@@ -114,14 +112,16 @@ Currently, we do not support retrieving bookmarks and notes for non-book content
 
 To see what exported data might look like, check out the [`examples/audible`](./examples/audible) directory.
 
+**Download audio**
+
+(Coming Soon) Download audio (`.aaxc` file) and split it into chapters (e.g., for side-loading on
+[Snipd](https://www.snipd.com)).
+
+Note that this is a separate command since audio files are typically stored in object storage, without using Git.
+
 ### Kindle
 
-ncli allows you to export the following Kindle data:
-
-- Highlights
-- Notes
-
-Execute the following command to do so:
+**Export highlights and notes**
 
 ```
 ncli kindle export --target <path>
@@ -136,6 +136,9 @@ To set a standard path for your Kindle exports and avoid having to put it in eve
 
 ```
 ncli config set kindle_export_dir <path>
+
+# Afterward, you can simply use:
+ncli kindle export
 ```
 
 Please be aware of these known limitations (which also apply to [Kindle Notebook](https://read.amazon.com/notebook)):
@@ -151,7 +154,7 @@ To see what exported data might look like, check out the [`examples/kindle`](./e
 
 ### Notion
 
-For Notion, ncli supports formatting exported data for efficient tracking with version control systems like Git.
+**Post-process Notion's exported data**
 
 ```
 ncli notion export --target <path> --source <path>
@@ -174,18 +177,13 @@ To see what exported data might look like, check out the [`examples/notion`](./e
 
 ### YouTube
 
-ncli offers the ability to:
-
-- Retrieve transcript
-- Summarize using AI
-
-Here's how:
+**Summarize video**
 
 ```
-ncli youtube export --target <path> --source <url>
+ncli youtube export --target <path> --summarize --source <url>
 
-# To summarize the transcript (or group them by time window):
-ncli youtube export --target <path> --summarize -- source <url>
+# To also include the transcript:
+ncli youtube export --target <path> --summarize --transcribe --source <url>
 ```
 
 The target path should be a directory where you want the YouTube data to be stored.
@@ -194,61 +192,57 @@ To set a standard path for your YouTube exports and avoid having to put it in ev
 
 ```
 ncli config set youtube.export_dir <path>
+
+# Afterward, you can simply use:
+ncli youtube export --summarize --source <url>
 ```
 
-By default, the `--summarize` option groups transcripts within a given time window, which is useful if you plan to
-perform the summarization elsewhere. If you want to call the API directly, adjust the config:
+Currently, ncli only supports summarization with OpenAI. Contributions to add support for other providers are welcome.
+
+The `--summarize` option requires setting the `OPENAI_API_KEY` environment variable. Without this option, ncli will only
+concatenate transcript items within the configured time window (future plan: implement a proper chunking algorithm).
+This can be useful though if you plan to perform summarization elsewhere.
 
 ```
-# Note that you also need to set the `OPENAI_API_KEY` env var accordingly
-ncli config set youtube.model <model>
+# For the complete list of default values, see Config class in 'ncli/kit_youtube.py'
+
+ncli config set youtube.language "en"
+ncli config set youtube.model "gpt-4o-mini"
+ncli config set youtube.prompt_system "system prompt"
+ncli config set youtube.prompt_summarize "user prompt"
+ncli config set youtube.summary_time_window_minutes 15
 ```
 
-Refer to the documentation [here](https://platform.openai.com/docs/models) for available models.
+For available models, refer to the [OpenAI documentation](https://platform.openai.com/docs/models).
 
-You can also adjust the system and summarize prompts using `youtube.prompt_system` and `youtube.prompt_summarize` config
-keys. We currently use a relatively simple pattern:
+The prompt pattern uses a simple structure:
 
 ```
 messages=[
   {"role": "system", "content": config.prompt_system},
-  {"role": "user", "content": f'Transcript:\n"""\n{text}\n"""\n\n{config.prompt_summarize}'},
+  {"role": "user", "content": f"<transcript>:\n{text}\n</transcript>\n\n{config.prompt_summarize}"},
 ]
 ```
 
-Note that the transcript text has been sanitized to remove newlines and unnecessary whitespaces.
-
-By default, we use a 15-minute time window for summarization, as longer time windows sometimes do not fit into the
-GPT-3.5 4K context window. You can customize this time window by updating the config:
-
-```
-ncli config set youtube.summary_time_window_minutes <int>
-```
-
-To see what exported data might look like, check out the [`examples/youtube`](./examples/youtube) directory.
+To see example output, check out the [`examples/youtube`](./examples/youtube) directory.
 
 ## FAQ
 
-**1. Why are there more than one licenses in this repository?**
+**1. Why are there more than one license in this repository?**
 
-This repository includes code based on other open-source projects, which are bound by stricter licenses, such as
-AGPL-3.0. This license requires any derivative work to adopt the same license. However, parts of the code that don't
-rely on such libraries are covered under the MIT license.
-
-For instance, Amazon-related features (i.e., [Kindle](#kindle) and [Audible](#audible)) rely on the
+ncli currently depends on some code with an AGPL-3.0 license, which requires any derivative work to adopt the same
+license. More specifically, Amazon-related features (i.e., [Kindle](#kindle) and [Audible](#audible)) rely on the
 [audible](https://github.com/mkb79/Audible) package (under AGPL-3.0) to retrieve Amazon auth cookies and fetch Audible
 data.
 
+Code that doesn't rely on such libraries is covered under the MIT license.
+
 **2. What's the purpose of this project?**
 
-In today's information-rich world, managing and accessing notes scattered across multiple platforms can be challenging.
-The primary goal of this project is to aid users in consolidating their notes in a single location, making it easier to
-track changes with an existing version control system such as Git.
-
-This project doesn't aim to replace the excellent user experience provided by many services. Instead, it serves as a
-complementary tool for version control, local search, data backup, and more.
+The primary goal of this project is to help those who want to organize their notes in a single location and track
+changes with a version control system such as Git.
 
 ## Contributing
 
-We warmly welcome all contributions. Please submit bug reports and feature requests through GitHub Issues. We appreciate
-your time and effort in helping to improve this project!
+All contributions are welcome. Please submit bug reports and feature requests through GitHub Issues. Thanks for your
+time and effort in helping to improve this project!

@@ -3,18 +3,15 @@ A module for processing and managing YouTube data.
 """
 
 import os
-
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
-from urllib.parse import urlparse, parse_qs
-
-from pydantic import BaseModel  # pylint: disable=no-name-in-module
+from urllib.parse import parse_qs, urlparse
 
 import openai
-import pytube
+import pytubefix as pytube
 from click import echo
+from pydantic import BaseModel  # pylint: disable=no-name-in-module
 from youtube_transcript_api import YouTubeTranscriptApi
 
 from ncli.utils import format_duration
@@ -24,30 +21,29 @@ class Config(BaseModel):
     """
     Config for YouTube operations.
     """
-    export_dir: Optional[str] = None
 
-    language: str = 'en'
+    export_dir: str | None = None
+
+    language: str = "en"
 
     # Defaults to 15 mins, which is typically near borderline to fit within 8K context length.
     summary_time_window_minutes: int = 15
 
-    # Should be fine to use 'gpt-3.5-turbo', which is more accessible (not under limited beta) and is much cheaper
-    # at the moment. For slightly better result, use 'gpt-4'. If you need longer context (e.g., because of longer
-    # time window), you can also use `gpt-4-32k`.
-    #
     # Note that you need `OPENAI_API_KEY` env var to access OpenAI API.
     #
-    # If the model is set to an empty string, the summary will just be a concatenation of the texts to
-    # be summarized. This may be useful for those who want to do the summarization using external app
-    # (e.g., if already have ChatGPT Plus subscription).
-    model: str = ''
+    # If the model is set to an empty string or `OPENAI_API_KEY` is not provided,
+    # the summary will just be a concatenation of the texts to be summarized.
+    # This may be useful for those who want to do the summarization using an
+    # external app.
+    model: str = "gpt-4o-mini"
 
-    prompt_system: str = 'You are a helpful assistant.'
+    prompt_system: str = "You are a helpful assistant."
 
-    prompt_summarize: str = \
-        'Can you analyze all the key points and arrange them into cohesive paragraphs? ' \
-        'Do not reorder/remove any of the key points. Keep the number of paragraphs to a minimum. ' \
-        'Respond only with the paragraphs. Do not add your own words.'
+    prompt_summarize: str = (
+        "Can you analyze all the key points and arrange them into cohesive paragraphs? "
+        "Do not reorder/remove any of the key points. Keep the number of paragraphs to a minimum. "
+        "Respond only with the paragraphs. Do not add your own words."
+    )
 
 
 @dataclass
@@ -60,6 +56,7 @@ class TranscriptItem:
     duration (float): Duration of the transcript item in seconds.
     text (str): The actual transcript text.
     """
+
     start_ts: float
     duration: float
     text: str
@@ -74,8 +71,9 @@ class Transcript:
     items (List[TranscriptItem]): List of transcript items.
     language (str): Language of the transcript, default is 'en' (English).
     """
-    items: List[TranscriptItem]
-    language: str = 'en'
+
+    items: list[TranscriptItem]
+    language: str = "en"
 
 
 @dataclass
@@ -98,32 +96,34 @@ class VideoData:
     Rating and view count are not captured intentionally as they can change continuously and be distracting.
     To see the latest state, open the original url.
     """
+
     title: str
     url: str
     author: str
     length: float  # in seconds
     publish_date: datetime
-    keywords: List[str]
-    description: Optional[str]
+    keywords: list[str]
+    description: str | None
     transcript: Transcript
-    summary: Optional[Transcript] = None
+    summary: Transcript | None = None
 
 
-def _get_transcript(video_id: str, language='en') -> Transcript:
-    transcript = YouTubeTranscriptApi.get_transcript(
-        video_id, languages=(language,))
+def _get_transcript(video_id: str, language="en") -> Transcript:
+    transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=(language,))
 
-    items: List[TranscriptItem] = []
+    items: list[TranscriptItem] = []
     for part in transcript:
         # split() without arguments splits the string at whitespace groups (spaces, tabs, newlines),
         # and join() concatenates them together with a single space.
-        text = ' '.join(part['text'].split())
+        text = " ".join(part["text"].split())
 
-        items.append(TranscriptItem(
-            start_ts=part['start'],
-            duration=part['duration'],
-            text=text,
-        ))
+        items.append(
+            TranscriptItem(
+                start_ts=part["start"],
+                duration=part["duration"],
+                text=text,
+            )
+        )
 
     transcript = Transcript(items=items, language=language)
     return transcript
@@ -137,8 +137,11 @@ def _summarize(transcript: Transcript, config: Config) -> Transcript:
     cur_group_texts = []
 
     for item in transcript.items:
-        within_cur_group = cur_group_start_ts is not None and \
-            item.start_ts - cur_group_start_ts < config.summary_time_window_minutes * 60
+        within_cur_group = (
+            cur_group_start_ts is not None
+            and item.start_ts - cur_group_start_ts
+            < config.summary_time_window_minutes * 60
+        )
 
         if within_cur_group:
             cur_group_end_ts = item.start_ts + item.duration
@@ -146,8 +149,11 @@ def _summarize(transcript: Transcript, config: Config) -> Transcript:
         else:
             # If there's an existing group, add as summary
             if cur_group_start_ts is not None:
-                summary_items.append(_create_transcript_summary_item(
-                    cur_group_start_ts, cur_group_end_ts, cur_group_texts, config))
+                summary_items.append(
+                    _create_transcript_summary_item(
+                        cur_group_start_ts, cur_group_end_ts, cur_group_texts, config
+                    )
+                )
 
             # Create new group
             cur_group_start_ts = item.start_ts
@@ -156,8 +162,11 @@ def _summarize(transcript: Transcript, config: Config) -> Transcript:
 
     # Last group
     if cur_group_start_ts is not None:
-        summary_items.append(_create_transcript_summary_item(
-            cur_group_start_ts, cur_group_end_ts, cur_group_texts, config))
+        summary_items.append(
+            _create_transcript_summary_item(
+                cur_group_start_ts, cur_group_end_ts, cur_group_texts, config
+            )
+        )
 
     return Transcript(items=summary_items)
 
@@ -165,41 +174,46 @@ def _summarize(transcript: Transcript, config: Config) -> Transcript:
 def _create_transcript_summary_item(
     start_ts: float,
     end_ts: float,
-    texts: List[str],
+    texts: list[str],
     config: Config,
 ) -> TranscriptItem:
-    text = ' '.join(texts)
+    text = " ".join(texts)
 
-    if config.model:
-        # Prereq: set OPENAI_API_KEY env var
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if config.model and api_key:
         try:
-            response = openai.ChatCompletion.create(
+            client = openai.OpenAI(api_key=api_key)
+
+            response = client.chat.completions.create(
                 model=config.model,
                 messages=[
                     {"role": "system", "content": config.prompt_system},
-                    {"role": "user", "content": f'Transcript:\n"""\n{text}\n"""\n\n{config.prompt_summarize}'},
-                ]
+                    {
+                        "role": "user",
+                        "content": f"<transcript>:\n{text}\n</transcript>\n\n{config.prompt_summarize}",
+                    },
+                ],
             )
-            text = response['choices'][0]['message']['content']
+            text = response.choices[0].message.content
 
             # Metadata for tracking/debugging
             response_metadata = {
-                'id': response['id'],
-                'model': response['model'],
-                'object': response['object'],
-                'usage': response['usage'],
-                'finish_reason': response['choices'][0]['finish_reason'],
+                "id": response.id,
+                "model": response.model,
+                "object": response.object,
+                "usage": response.usage,
+                "finish_reason": response.choices[0].finish_reason,
             }
-            echo(f'OpenAI metadata: {response_metadata}')
+            echo(f"OpenAI metadata: {response_metadata}")
         except Exception as e:  # pylint: disable=broad-exception-caught
             # Avoid failing the entire summarization just because a window fails to be summarized
             # (e.g., issue from the OpenAI API) or the response format changes for the metadata.
             #
             # Note that we may either end up with just concatenated transcript (if the request failed),
             # or still have the text being summarized properly (if it failed when parsing the response metadata).
-            echo(f'Failed to retrieve response properly. Reason: {e}')
+            echo(f"Failed to retrieve response properly. Reason: {e}")
 
-    return TranscriptItem(start_ts=start_ts, duration=end_ts-start_ts, text=text)
+    return TranscriptItem(start_ts=start_ts, duration=end_ts - start_ts, text=text)
 
 
 def _extract_video_id(url: str):
@@ -209,7 +223,7 @@ def _extract_video_id(url: str):
     if parsed_url.netloc in ("www.youtube.com", "youtube.com"):
         if parsed_url.path == "/watch":
             p = parse_qs(parsed_url.query)
-            return p['v'][0]
+            return p["v"][0]
         if parsed_url.path[:7] == "/embed/":
             return parsed_url.path.split("/")[2]
         if parsed_url.path[:3] == "/v/":
@@ -263,30 +277,30 @@ def export(
     os.makedirs(target_dir, exist_ok=True)
     video = _extract_video_data(video_url, config, with_summary=with_summary)
 
-    output_file = target_dir.joinpath(f'{video.title}.md')
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(f'# {video.title}\n\n')
+    output_file = target_dir.joinpath(f"{video.title}.md")
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(f"# {video.title}\n\n")
 
-        f.write(f'- URL: {video.url}\n')
-        f.write(f'- Author: {video.author}\n')
-        f.write(f'- Length: {format_duration(video.length)}\n')
+        f.write(f"- URL: {video.url}\n")
+        f.write(f"- Author: {video.author}\n")
+        f.write(f"- Length: {format_duration(video.length)}\n")
         f.write(f'- Publish date: {video.publish_date.strftime("%Y-%m-%d")}\n')
         if video.keywords:
             f.write(f'- Keywords: {", ".join(video.keywords)}\n')
         if video.description:
-            f.write('\n**Description:**\n')
-            f.write(f'\n{video.description}\n')
+            f.write("\n**Description:**\n")
+            f.write(f"\n{video.description}\n")
 
         if video.summary:
-            f.write('\n## Summary\n')
+            f.write("\n## Summary\n")
             for item in video.summary.items:
                 # Note that we use more than one newlines at the end of the timestamp to put the summary text
                 # as a separate line, given that it could sometimes consist of multiple paragraphs.
-                f.write(f'\n[{format_duration(item.start_ts)}]\n\n')
-                f.write(f'{item.text}\n')
+                f.write(f"\n[{format_duration(item.start_ts)}]\n\n")
+                f.write(f"{item.text}\n")
 
         if with_transcript:
-            f.write('\n## Transcript\n')
+            f.write("\n## Transcript\n")
             for item in video.transcript.items:
-                f.write(f'\n[{format_duration(item.start_ts)}]\n')
-                f.write(f'{item.text}\n')
+                f.write(f"\n[{format_duration(item.start_ts)}]\n")
+                f.write(f"{item.text}\n")
