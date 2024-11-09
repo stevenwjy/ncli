@@ -116,7 +116,8 @@ To see example output, check out the [`examples/audible`](./examples/audible) di
 Download audiobook (`.aaxc` file), convert to `.mp3`, and split by chapter (e.g., for side-loading on
 [Snipd](https://www.snipd.com)).
 
-> [!IMPORTANT] Please only use this for accessing your own audiobooks and DO NOT upload them publicly.
+> [!IMPORTANT]
+> Please only use this for accessing your own audiobooks and DO NOT upload them publicly.
 
 Prerequisites:
 
