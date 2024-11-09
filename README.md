@@ -87,43 +87,58 @@ because we use the [audible](https://github.com/mkb79/Audible) package for authe
 
 Included information: list of chapters, clips, notes, and accompanying PDF.
 
-```
+```bash
 ncli audible export --target <path>
 
-# To fetch all book data, even if they have been indexed before, use:
+# To fetch all book data, even if previously indexed:
 ncli audible export --target <path> --renew
 ```
 
 The target path should be a directory where you want the Audible data to be stored.
 
-To set a standard path for your Audible exports and avoid having to put it in every command, use the following:
+To set a standard path for your Audible exports and avoid having to specify it in every command:
 
-```
+```bash
 ncli config set audible_export_dir <path>
 
-# Afterward, you can simply use:
+# Once configured:
 ncli audible export
 ```
 
-Your data will be organized in a markdown file, except for the accompanying PDF (if any), which will be saved as a
-separate file.
+Your data will be organized in a Markdown file, with any accompanying PDF saved as a separate file.
 
 Currently, we do not support retrieving bookmarks and notes for non-book content (e.g., podcasts).
 
-To see what exported data might look like, check out the [`examples/audible`](./examples/audible) directory.
+To see example output, check out the [`examples/audible`](./examples/audible) directory.
 
-**Download audio**
+**Download audiobook**
 
-(Coming Soon) Download audio (`.aaxc` file) and split it into chapters (e.g., for side-loading on
+Download audiobook (`.aaxc` file), convert to `.mp3`, and split by chapter (e.g., for side-loading on
 [Snipd](https://www.snipd.com)).
 
-Note that this is a separate command since audio files are typically stored in object storage, without using Git.
+> [!IMPORTANT] Please only use this for accessing your own audiobooks and DO NOT upload them publicly.
+
+Prerequisites:
+
+- Book must be indexed first using the `export` command above
+- `ffmpeg` and `ffprobe` must be installed
+  ([installation guide](https://github.com/KwaiVGI/LivePortrait/blob/main/assets/docs/how-to-install-ffmpeg.md))
+
+Assuming you have `audible_export_dir` set, you can run:
+
+```bash
+# Interactive prompts will guide you through
+ncli audible download
+```
+
+By convention, audio files are stored in `/path/to/audible_export_dir/audio/book_title`. Contributions to add more
+granular configuration options are welcome.
 
 ### Kindle
 
 **Export highlights and notes**
 
-```
+```bash
 ncli kindle export --target <path>
 
 # To fetch all book data, even if they have been indexed before, use:
@@ -134,7 +149,7 @@ The target path should be a directory where you want the Kindle data to be store
 
 To set a standard path for your Kindle exports and avoid having to put it in every command, use the following:
 
-```
+```bash
 ncli config set kindle_export_dir <path>
 
 # Afterward, you can simply use:
@@ -156,7 +171,7 @@ To see what exported data might look like, check out the [`examples/kindle`](./e
 
 **Post-process Notion's exported data**
 
-```
+```bash
 ncli notion export --target <path> --source <path>
 
 # To overwrite an existing target path:
@@ -169,7 +184,7 @@ exported zip file, which you can obtain by following the guide for
 
 To set a standard path for your Notion exports and avoid having to put it in every command, use the following:
 
-```
+```bash
 ncli config set notion_export_dir <path>
 ```
 
@@ -179,7 +194,7 @@ To see what exported data might look like, check out the [`examples/notion`](./e
 
 **Summarize video**
 
-```
+```bash
 ncli youtube export --target <path> --summarize --source <url>
 
 # To also include the transcript:
@@ -190,7 +205,7 @@ The target path should be a directory where you want the YouTube data to be stor
 
 To set a standard path for your YouTube exports and avoid having to put it in every command, use the following:
 
-```
+```bash
 ncli config set youtube.export_dir <path>
 
 # Afterward, you can simply use:
@@ -203,7 +218,7 @@ The `--summarize` option requires setting the `OPENAI_API_KEY` environment varia
 concatenate transcript items within the configured time window (future plan: implement a proper chunking algorithm).
 This can be useful though if you plan to perform summarization elsewhere.
 
-```
+```bash
 # For the complete list of default values, see Config class in 'ncli/kit_youtube.py'
 
 ncli config set youtube.language "en"
@@ -217,7 +232,7 @@ For available models, refer to the [OpenAI documentation](https://platform.opena
 
 The prompt pattern uses a simple structure:
 
-```
+```py
 messages=[
   {"role": "system", "content": config.prompt_system},
   {"role": "user", "content": f"<transcript>:\n{text}\n</transcript>\n\n{config.prompt_summarize}"},

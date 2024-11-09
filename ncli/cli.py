@@ -136,9 +136,7 @@ def _update_config(config: BaseModel, key: str, value: str | int) -> None:
 
         # Check if the value has correct type
         if not isinstance(value, declared_type):
-            raise TypeError(
-                f"Expected type {declared_type} for field {keys[0]}, got {type(value)}"
-            )
+            raise TypeError(f"Expected type {declared_type} for field {keys[0]}, got {type(value)}")
 
         setattr(config, keys[0], value)
 
@@ -171,8 +169,7 @@ def config_amazon_auth(ctx: click.Context) -> None:
     config: Config = ctx.obj["config"]
     if config.amazon.auth_file:
         if not utils.prompt_user(
-            f"Auth file {config.amazon.auth_file} is found in the config. "
-            "Do you want to replace it?"
+            f"Auth file {config.amazon.auth_file} is found in the config. " "Do you want to replace it?"
         ):
             # If the user answer no, terminate the command
             return
@@ -185,9 +182,7 @@ def config_amazon_auth(ctx: click.Context) -> None:
         )
         if (constants.BASE_PATH / auth_file).exists():
             echo()
-            if not utils.prompt_user(
-                "File with the given name already exists. Do you want to overwrite?"
-            ):
+            if not utils.prompt_user("File with the given name already exists. Do you want to overwrite?"):
                 auth_file = None  # This will repeat the loop
                 continue
         # Else will exit the for loop
@@ -209,9 +204,7 @@ def config_amazon_auth(ctx: click.Context) -> None:
 
     # Recommended to log in with external browser.
     # Safer and can avoid the need to enter OTP, Captcha, etc. on terminal.
-    external_login = utils.prompt_user(
-        "Do you want to login with external browser (recommended)?"
-    )
+    external_login = utils.prompt_user("Do you want to login with external browser (recommended)?")
 
     username = None
     password = None
@@ -252,12 +245,8 @@ def audible_cli(_: click.Context) -> None:
 
 
 @audible_cli.command(name="export")
-@click.option(
-    "--target", type=click.Path(), help="Path to the target location for the export."
-)
-@click.option(
-    "--renew", is_flag=True, help="Fetch all books regardless of the index data."
-)
+@click.option("--target", type=click.Path(), help="Path to the audible export directory.")
+@click.option("--renew", is_flag=True, help="Fetch all books regardless of the index data.")
 @click.pass_context
 def audible_export(
     ctx: click.Context,
@@ -270,7 +259,35 @@ def audible_export(
     if target is None:
         raise ValueError("unknown export target")
 
-    audible.export(config.amazon, Path(target).expanduser(), renew)
+    target_path = Path(target).expanduser()
+    if not target_path.exists():
+        os.makedirs(target_path)
+    elif not target_path.is_dir():
+        raise Exception(f"Path {target_path} must be a directory.")
+
+    audible.export(config.amazon, target_path, renew)
+
+
+@audible_cli.command(name="download")
+@click.option("--target", type=click.Path(), help="Path to the audible export directory.")
+@click.pass_context
+def audible_download(
+    ctx: click.Context,
+    target: str | None,
+) -> None:
+    """Audible export command."""
+    config: Config = ctx.obj["config"]
+    target = target if target is not None else config.audible_export_dir
+    if target is None:
+        raise ValueError("unknown export target")
+
+    target_path = Path(target).expanduser()
+    if not target_path.exists():
+        os.makedirs(target_path)
+    elif not target_path.is_dir():
+        raise Exception(f"Path {target_path} must be a directory.")
+
+    audible.download(config.amazon, target_path)
 
 
 # ---
@@ -285,12 +302,8 @@ def kindle_cli(_: click.Context) -> None:
 
 
 @kindle_cli.command(name="export")
-@click.option(
-    "--target", type=click.Path(), help="Path to the target location for the export."
-)
-@click.option(
-    "--renew", is_flag=True, help="Fetch all books regardless of the index data."
-)
+@click.option("--target", type=click.Path(), help="Path to the target location for the export.")
+@click.option("--renew", is_flag=True, help="Fetch all books regardless of the index data.")
 @click.pass_context
 def kindle_export(
     ctx: click.Context,
@@ -324,9 +337,7 @@ def notion_cli(_: click.Context) -> None:
     type=click.Path(),
     help="Path to the target location after the conversion.",
 )
-@click.option(
-    "--force", is_flag=True, help="Removes the current target directory if it exists."
-)
+@click.option("--force", is_flag=True, help="Removes the current target directory if it exists.")
 @click.pass_context
 def notion_export(
     ctx: click.Context,
@@ -344,6 +355,42 @@ def notion_export(
         Path(source).expanduser(),
         Path(target).expanduser(),
         force,
+    )
+
+
+# ---
+# Obsidian
+# ---
+
+
+@cli.group(name="obsidian")
+@click.pass_context
+def obsidian_cli(_: click.Context) -> None:
+    """Obsidian group command."""
+
+
+@obsidian_cli.command(name="convert-notion-database")
+@click.option("--source", type=click.Path(), help="Path to the source file.")
+@click.option(
+    "--target",
+    type=click.Path(),
+    help="Path to the target location after the conversion.",
+)
+@click.pass_context
+def obsidian_convert_notion_database(
+    ctx: click.Context,
+    source: str,
+    target: str,
+) -> None:
+    """Command to convert Notion database data into Obsidian format."""
+    if source is None:
+        raise ValueError("unknown source")
+    if target is None:
+        raise ValueError("unknown target")
+
+    obsidian.convert_notion_database(
+        Path(source).expanduser(),
+        Path(target).expanduser(),
     )
 
 

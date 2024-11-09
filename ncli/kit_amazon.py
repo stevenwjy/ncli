@@ -4,17 +4,18 @@
 """
 A module for processing and managing Amazon data.
 """
+
 from __future__ import annotations
 
 import getpass
 import io
+import math
 import os.path
 from datetime import datetime
 from pathlib import Path
 
 import click
 import httpx
-import requests
 import toml
 from audible import Authenticator
 from audible.auth import detect_file_encryption
@@ -22,6 +23,7 @@ from audible.login import default_login_url_callback
 from click import echo, prompt, secho
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
+from tqdm import tqdm
 
 from ncli import constants
 from ncli.utils import format_duration_from_ms, prompt_user, toml_dumps_with_newline
@@ -41,6 +43,8 @@ AVAILABLE_COUNTRY_CODES: list[str] = [
 ]
 DEFAULT_AUTH_FILE_EXTENSION: str = "json"
 DEFAULT_AUTH_FILE_ENCRYPTION: str = "json"
+
+MAX_AUTH_TRIES = 3
 
 
 class Config(BaseModel):
@@ -62,14 +66,17 @@ def load_authenticator(config: Config) -> Authenticator:
         if detect_file_encryption(file_path):
             pwd = getpass.getpass("Enter auth file password: ")
 
-        try:
-            return Authenticator.from_file(file_path, pwd)
-        except ValueError as e:
-            if pwd:
-                raise ValueError(
-                    f"Failed to decrypt the auth file. Wrong password? Error: {e}"
-                ) from e
-            raise e
+        num_try = 1
+        while True:
+            try:
+                return Authenticator.from_file(file_path, pwd)
+            except ValueError as e:
+                if pwd and num_try < MAX_AUTH_TRIES:
+                    echo("Failed to decrypt the auth file. Wrong password?")
+                    pwd = getpass.getpass("Enter auth file password: ")
+                    num_try += 1
+                    continue
+                raise e
 
     raise ValueError("Config without auth file not supported")
 
@@ -104,6 +111,18 @@ class Book(BaseModel):
     # - Last time the book is read for Kindle.
     # - Last time the book is listened for Audible (based on last update time for the last listened position).
     last_opened_date: str = ""
+
+    # Only for Audible: indicates whether the audiobook is downloadable.
+    is_downloadable: bool | None = None
+
+    def is_published(self) -> bool:
+        if not self.publication_date:
+            return False
+
+        date_pub = datetime.strptime(self.publication_date, "%Y-%m-%d")
+        # TODO: Shall we use timezone for the kindle auth?
+        date_now = datetime.now()
+        return date_now > date_pub
 
 
 class Chapter(BaseModel):
@@ -157,6 +176,9 @@ class ExportItem(BaseModel):
     """
 
     last_updated_time: str
+
+    is_downloaded: bool = False
+
     info: Book
 
     checked: bool = Field(default=False, exclude=True)
@@ -188,7 +210,12 @@ class ExportIndex(BaseModel):
         """
         Save the export index into the specified path.
         """
-        index_str = toml_dumps_with_newline(self.dict())
+        index_str = toml_dumps_with_newline(
+            self.model_dump(
+                exclude_none=True,
+                exclude_defaults=True,
+            )
+        )
         with open(path, "w", encoding="utf-8") as file:
             file.write(index_str)
 
@@ -209,9 +236,7 @@ class ExportIndex(BaseModel):
         """
 
         # Generate the current time in case we want to update the index
-        current_datetime = (
-            datetime.now().astimezone().strftime("%a, %d %b %Y %H:%M:%S %z")
-        )
+        current_datetime = datetime.now().astimezone().strftime("%a, %d %b %Y %H:%M:%S %z")
 
         # WARN: This could be problematic if someone tampers with the index file manually and adds a book
         #       with a duplicate ASIN. However, we ignore it now since it is not an expected behavior.
@@ -246,9 +271,7 @@ class ExportIndex(BaseModel):
             # Ask the user first whether they want to fetch the updated annotations
 
             # If yes, then we will automatically update the index to reflect the latest metadata
-            if skip_check or prompt_user(
-                "Do you want to fetch the latest data for this book?"
-            ):
+            if skip_check or prompt_user("Do you want to fetch the latest data for this book?"):
                 indexed_book.info = book
                 indexed_book.last_updated_time = current_datetime
                 return True
@@ -283,6 +306,7 @@ class ExportIndex(BaseModel):
         # This could be useful if they want to avoid keep getting prompts for a book that has not
         # been opened again.
         if prompt_user("Do you want to add the book to the index?"):
+            # TODO: Ensure the uniqueness of the title first?
             self.books.append(item)
 
         return False
@@ -364,10 +388,7 @@ def export_to_markdown(
                 # Metadata
                 if annotation.created_at:
                     f.write(f"- Created: {annotation.created_at}")
-                    if (
-                        annotation.updated_at
-                        and annotation.updated_at != annotation.created_at
-                    ):
+                    if annotation.updated_at and annotation.updated_at != annotation.created_at:
                         f.write(f" | Updated: {annotation.updated_at}")
                     f.write("\n")
                 if annotation.clip_start_ms:
@@ -458,9 +479,7 @@ def build_auth_file(
 
     file_options = {"filename": Path(filename)}
     if file_password:
-        file_options.update(
-            password=file_password, encryption=DEFAULT_AUTH_FILE_ENCRYPTION
-        )
+        file_options.update(password=file_password, encryption=DEFAULT_AUTH_FILE_ENCRYPTION)
 
     if external_login:
         auth = Authenticator.from_login_external(
@@ -495,102 +514,124 @@ def build_auth_file(
 
 class Downloader:
     """
-    This code is based on the implementation found at:
-    https://github.com/mkb79/audible-cli/blob/59ec48189d32cf1e0054be05650f35d83bafdfdb/src/audible_cli/utils.py#L170
+    Downloader for a remote object file.
 
-    Modifications have been made to adapt the code to our specific use case and requirements.
+    The code here was inspired from:
+    https://github.com/mkb79/audible-cli/blob/b3adb9a33157322cd6d79ff59f5dacf06dc3e034/src/audible_cli/downloader.py#L286
+
+    However, lots of modifications have been made based on our use cases.
     """
 
     def __init__(
         self,
         url: str,
-        file: Path | str,
-        client: requests.Session,
-        overwrite_existing: bool,
-        content_type: list[str] | str | None = None,
+        path: Path | str,
+        client: httpx.Client,
+        headers: dict[str, str] | None = None,
+        desc: str = "file",
+        # Chunk size for streaming
+        chunk_size=64 * 1024,  # 64KB
+        # If a past attempt to download the file is found and the endpoint
+        # supports range requests, then the downloader should prefer to just
+        # resume the download instead of starting from zero.
+        prefer_continue=True,
+        # Expected potential types for the downloaded file.
+        expected_types: list[str] | str | None = None,
     ) -> None:
         self._url = url
-        self._file = Path(file).resolve()
-        self._tmp_file = self._file.with_suffix(".tmp")
+        self._target_path = Path(path).resolve()
+        self._tmp_path = self._target_path.with_suffix(".tmp")
+
         self._client = client
-        self._overwrite_existing = overwrite_existing
+        self._headers = {} if headers is None else headers
 
-        if isinstance(content_type, str):
-            content_type = [content_type]
-        self._expected_content_types = content_type
+        self._desc = desc
+        self._chunk_size = chunk_size
+        self._prefer_continue = prefer_continue
 
-    def _file_okay(self):
-        if not self._file.parent.is_dir():
-            echo(f"Folder {self._file.parent} doesn't exists! Skip download")
-            return False
+        if isinstance(expected_types, str):
+            expected_types = [expected_types]
+        self._expected_content_types = expected_types
 
-        if self._file.exists() and not self._file.is_file():
-            echo(f"Object {self._file} exists but is no file. Skip download")
-            return False
-
-        if self._file.is_file() and not self._overwrite_existing:
-            echo(f"File {self._file} already exists. Skip download")
-            return False
-
-        return True
-
-    def _postpare(self, elapsed, status_code, length, content_type):
-        if not 200 <= status_code < 400:
-            try:
-                msg = self._tmp_file.read_text()
-            except:  # pylint: disable=bare-except
-                msg = "Unknown"
-            echo(f"Error downloading {self._file}. Message: {msg}")
-            return False
-
-        if length is not None:
-            downloaded_size = self._tmp_file.stat().st_size
-            length = int(length)
-            if downloaded_size != length:
-                echo(
-                    f"Error downloading {self._file}. File size missmatch. "
-                    f"Expected size: {length}; Downloaded: {downloaded_size}"
-                )
-                return False
-
-        if self._expected_content_types is not None:
-            if content_type not in self._expected_content_types:
-                try:
-                    msg = self._tmp_file.read_text()
-                except:  # pylint: disable=bare-except
-                    msg = "Unknown"
-                echo(
-                    f"Error downloading {self._file}. Wrong content type. "
-                    f"Expected type(s): {self._expected_content_types}; "
-                    f"Got: {content_type}; Message: {msg}"
-                )
-                return False
-
-        file = self._file
-        tmp_file = self._tmp_file
-        if file.exists() and self._overwrite_existing:
-            i = 0
-            while file.with_suffix(f"{file.suffix}.old.{i}").exists():
-                i += 1
-            file.rename(file.with_suffix(f"{file.suffix}.old.{i}"))
-        tmp_file.rename(file)
-        echo(f"File {self._file} downloaded in {elapsed}.")
-        return True
-
-    def _load(self):
-        r = self._client.get(self._url, follow_redirects=True)
-        length = r.headers.get("Content-Length")
-        content_type = r.headers.get("Content-Type")
-        with open(self._tmp_file, mode="wb") as f:
-            f.write(r.content)
-        return self._postpare(r.elapsed, r.status_code, length, content_type)
-
+    # Returns whether the file has been successfully downloaded.
     def run(self):
-        if not self._file_okay():
-            return False
-        try:
-            self._load()
-        finally:
-            # Remove tmp file
-            if self._tmp_file.exists():
-                self._tmp_file.unlink()
+        self._validate_paths()
+
+        if self._target_path.exists():
+            # Note that this is guaranteed to be the "full" version because
+            # partial download always goes to a tmp file first.
+            echo(f"Path {self._target_path} already exists. Skip download for {self._desc}.")
+            return
+
+        start_byte, est_size, mode = 0, math.inf, "wb"
+        if self._prefer_continue:
+            accepts_ranges, est_size = self._check_support_range_reqs()
+            # Note that we always download to the tmp path first.
+            # TODO: Should we check the ETag header for integrity?
+            if self._tmp_path.exists() and accepts_ranges:
+                start_byte = os.path.getsize(self._tmp_path)
+                mode = "ab"
+
+        if start_byte < est_size:
+            headers = self._headers.copy()
+            if start_byte > 0:
+                headers["Range"] = f"bytes={start_byte}-"
+
+            response: httpx.Response
+            with self._client.stream("GET", self._url, headers=headers, follow_redirects=True) as response:
+                response.raise_for_status()
+
+                content_type = response.headers.get("Content-Type")
+                if self._expected_content_types is not None and content_type not in self._expected_content_types:
+                    raise Exception(
+                        f"Downloaded content type '{content_type}' is not within {self._expected_content_types}"
+                    )
+                total_size = int(response.headers.get("Content-Length", 0))
+
+                with tqdm(
+                    total=total_size,
+                    initial=start_byte,
+                    unit="iB",
+                    unit_scale=True,
+                    unit_divisor=1024,  # For binary multiples (KiB, MiB, etc)
+                    desc=f"Downloading {self._desc}",
+                ) as progress_bar:
+                    with open(self._tmp_path, mode=mode) as f:
+                        for chunk in response.iter_bytes(chunk_size=self._chunk_size):
+                            f.write(chunk)
+                            progress_bar.update(len(chunk))
+                        progress_bar.close()
+
+        self._tmp_path.rename(self._target_path)
+
+        # Remove tmp file
+        if self._tmp_path.exists():
+            self._tmp_path.unlink()
+
+    def _validate_paths(self):
+        if not self._target_path.parent.is_dir():
+            raise Exception(f"Dir {self._target_path.parent} does not exist. Skip download")
+
+        if self._target_path.exists() and not self._target_path.is_file():
+            raise Exception(f"Path {self._target_path} exists but is not a file.")
+
+        if self._tmp_path.exists() and not self._tmp_path.is_file():
+            raise (f"Temp path {self._tmp_path} exists but is not a file.")
+
+    def _check_support_range_reqs(self) -> tuple[bool, int]:
+        """Check if server supports resume and get total file size."""
+        # We are using GET request here (without loading the body) as HEAD
+        # requests can sometimes be slower.
+        # Ref: https://github.com/mkb79/audible-cli/pull/196
+        response: httpx.Response
+        with self._client.stream("GET", self._url, headers=self._headers, follow_redirects=True) as response:
+            response.raise_for_status()
+
+            # Update URL if there's redirect so that we don't need to go through
+            # redirection again later on.
+            if response.request.url != self._url:
+                self._url = response.request.url
+
+            accepts_ranges = response.headers.get("Accept-Ranges") == "bytes"
+            total_size = int(response.headers.get("Content-Length", 0))
+            return accepts_ranges, total_size
