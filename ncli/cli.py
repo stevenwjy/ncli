@@ -20,7 +20,6 @@ from ncli import kit_amazon as amazon
 from ncli import kit_audible as audible
 from ncli import kit_kindle as kindle
 from ncli import kit_notion as notion
-from ncli import kit_obsidian as obsidian
 from ncli import kit_youtube as youtube
 from ncli.kit_amazon import Config as AmazonConfig
 from ncli.kit_youtube import Config as YoutubeConfig
@@ -355,42 +354,6 @@ def notion_export(
         Path(source).expanduser(),
         Path(target).expanduser(),
         force,
-    )
-
-
-# ---
-# Obsidian
-# ---
-
-
-@cli.group(name="obsidian")
-@click.pass_context
-def obsidian_cli(_: click.Context) -> None:
-    """Obsidian group command."""
-
-
-@obsidian_cli.command(name="convert-notion-database")
-@click.option("--source", type=click.Path(), help="Path to the source file.")
-@click.option(
-    "--target",
-    type=click.Path(),
-    help="Path to the target location after the conversion.",
-)
-@click.pass_context
-def obsidian_convert_notion_database(
-    ctx: click.Context,
-    source: str,
-    target: str,
-) -> None:
-    """Command to convert Notion database data into Obsidian format."""
-    if source is None:
-        raise ValueError("unknown source")
-    if target is None:
-        raise ValueError("unknown target")
-
-    obsidian.convert_notion_database(
-        Path(source).expanduser(),
-        Path(target).expanduser(),
     )
 
 
