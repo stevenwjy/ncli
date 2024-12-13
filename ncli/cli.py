@@ -19,6 +19,7 @@ from ncli import (
 from ncli import kit_amazon as amazon
 from ncli import kit_audible as audible
 from ncli import kit_kindle as kindle
+from ncli import kit_llm as llm
 from ncli import kit_notion as notion
 from ncli import kit_youtube as youtube
 from ncli.kit_amazon import Config as AmazonConfig
@@ -316,6 +317,47 @@ def kindle_export(
         raise ValueError("unknown export target")
 
     kindle.export(config.amazon, Path(target).expanduser(), renew)
+
+
+# ---
+# LLM
+# ---
+
+
+@cli.group(name="llm")
+@click.pass_context
+def llm_cli(_: click.Context) -> None:
+    """LLM group command."""
+
+
+@llm_cli.command(name="scan")
+@click.option("--target", type=click.Path(), help="Path to the target directory of the images.")
+@click.option("--auto-approve", is_flag=True, help="Auto approve all extractions.")
+@click.pass_context
+def llm_scan(
+    ctx: click.Context,
+    target: str,
+    auto_approve: bool,
+) -> None:
+    """LLM scan command."""
+    if target is None:
+        raise ValueError("unknown export target")
+
+    llm.scan_images(Path(target).expanduser(), auto_approve)
+
+
+@llm_cli.command(name="summarize")
+@click.option("--target", type=click.Path(), help="Path to the target directory of the txt files.")
+@click.pass_context
+def llm_summarize(
+    ctx: click.Context,
+    target: str,
+) -> None:
+    """LLM scan command."""
+    if target is None:
+        raise ValueError("unknown export target")
+
+    llm.summarize_txt(Path(target).expanduser())
 
 
 # ---
